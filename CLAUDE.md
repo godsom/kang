@@ -4,7 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-No code exists yet. The repository currently contains only `kaeng-game-spec.md`, the full technical spec for a multiplayer card game called "แคง" (Kaeng, similar to Rummy) that this project is meant to implement. Treat that file as the source of truth for game rules, architecture, data models, and event contracts — read it before implementing anything. Once a build system exists, update this file with actual build/lint/test commands.
+Milestone 1 (per the spec's §7 build order) is implemented: the core game engine — deck, dealing, hand scoring, meld validation, turn-direction logic, and win/payout resolution — lives in `src/` as pure functions with no networking or DB dependency. Each module has a matching test file under `tests/` (53/53 passing via Jest).
+
+- `src/config.js` — game config constants (rank values, thresholds, payout multipliers).
+- `src/deck.js` — deck construction/shuffle.
+- `src/handScore.js` — hand scoring.
+- `src/meld.js` — meld validation (ตอง/Flush/Straight) and rank ordering.
+- `src/dealing.js` — dealing logic.
+- `src/turn.js` — turn-direction / play-mode logic.
+- `src/win.js` — win-condition and payout resolution.
+
+Milestones 2+ (game server, client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+
+**Running tests:**
+```
+npm install
+npm test        # or: npx jest
+npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
+```
 
 ## Intended architecture (per spec)
 
@@ -45,7 +62,7 @@ Recommended stack: Node.js + Socket.io (game server), Redis (room state/cache), 
 - Melds: ตอง (3–4 of a kind), Flush (5 same suit), Straight (5 sequential same suit, A can be low or high but no wraparound e.g. K-A-2-3-4 is invalid). Tie-break priority: ตอง > Straight Flush > Flush > Straight.
 - Two play modes selected before game start: `chain_eat` (anyone next in queue can eat a matching discard without drawing) vs `sequential_beat` (only the immediately-next player can beat the prior discard; must draw first if no match).
 - Play direction is also configurable: `alternating` vs `one_way`.
-- Payout multipliers: instant kaeng (hand total < 8) ×1, ตอง ×2, Flush/Straight ×3.
+- Payout multipliers: instant kaeng (per-card, corrected rule — every card in the initial 5-card hand < 8, declared on the first turn only) ×1, ตอง ×2, Flush/Straight ×3.
 
 ## Key data model shapes (spec §4)
 

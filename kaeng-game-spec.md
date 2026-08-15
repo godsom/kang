@@ -83,7 +83,7 @@ Background Worker (cron/queue) — leaderboard, streak recalculation
 ### 2.7 ตัวคูณเดิมพัน (Payout Multiplier)
 | เงื่อนไขชนะ | ตัวคูณ |
 |---|---|
-| แคงด่วน (แต้มรวม < 8) | ×1 |
+| แคงด่วน (ตามเงื่อนไขที่แก้ไขในข้อ 2.2) | ×1 |
 | ตอง | ×2 |
 | Flush / Straight | ×3 |
 
