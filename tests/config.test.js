@@ -32,6 +32,7 @@ describe('VOICE_CONFIG', () => {
     expect(VOICE_CONFIG.provider).toBe('livekit');
     expect(VOICE_CONFIG.maxPublishers).toBe(5);
     expect(VOICE_CONFIG.spectatorMode).toBe('subscribe_only');
+    expect(VOICE_CONFIG.pushToTalk).toBe(false);
   });
 });
 
@@ -39,5 +40,10 @@ describe('SPECTATOR_CONFIG', () => {
   test('spectators cannot see hands', () => {
     expect(SPECTATOR_CONFIG.canSeeHands).toBe(false);
     expect(SPECTATOR_CONFIG.maxPerRoom).toBe(50);
+  });
+
+  test('spectators can chat and hear voice', () => {
+    expect(SPECTATOR_CONFIG.canChat).toBe(true);
+    expect(SPECTATOR_CONFIG.canHearVoice).toBe(true);
   });
 });
