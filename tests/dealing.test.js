@@ -21,7 +21,7 @@ describe('dealCards', () => {
 describe('determineFirstDealer', () => {
   test('returns the userId of the player who drew the lowest-value card', () => {
     // drawCard pops from the end, so build the deck so p1 gets K, p2 gets A
-    const deck = [{ suit: 's', rank: 'K' }, { suit: 'h', rank: 'A' }];
+    const deck = [{ suit: 'h', rank: 'A' }, { suit: 's', rank: 'K' }];
     const players = [{ userId: 'p1' }, { userId: 'p2' }];
     expect(determineFirstDealer(players, deck)).toBe('p2');
   });

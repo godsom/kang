@@ -10,7 +10,7 @@ function dealCards(players, deck, handSize = GAME_CONFIG.HAND_SIZE) {
 }
 
 function determineFirstDealer(players, deck) {
-  const draws = [...players].reverse().map(player => ({ userId: player.userId, card: drawCard(deck) }));
+  const draws = players.map(player => ({ userId: player.userId, card: drawCard(deck) }));
   const lowest = draws.reduce((min, draw) =>
     GAME_CONFIG.RANK_VALUE[draw.card.rank] < GAME_CONFIG.RANK_VALUE[min.card.rank] ? draw : min
   );
