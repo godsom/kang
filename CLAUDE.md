@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Milestone 1 (per the spec's §7 build order) is implemented: the core game engine — deck, dealing, hand scoring, meld validation, turn-direction logic, and win/payout resolution — lives in `src/` as pure functions with no networking or DB dependency. Each module has a matching test file under `tests/` (53/53 passing via Jest).
+Milestone 1 (per the spec's §7 build order) is implemented: the core game engine — deck, dealing, hand scoring, meld validation, turn-direction logic, and win/payout resolution — lives in `src/` as pure functions with no networking or DB dependency. Each module has a matching test file under `tests/` (55/55 passing via Jest).
 
 - `src/config.js` — game config constants (rank values, thresholds, payout multipliers).
 - `src/deck.js` — deck construction/shuffle.
