@@ -5,7 +5,15 @@ const { validateMeld, MELD_PRIORITY, RANK_ORDER } = require('./meld');
 
 function getMeldTopCardOrder(cards, type) {
   if (type === 'tong') return RANK_ORDER[cards[0].rank];
-  return Math.max(...cards.map(card => RANK_ORDER[card.rank]));
+  const orders = cards.map(card => RANK_ORDER[card.rank]);
+  if (type === 'straight' && orders.includes(1) && orders.includes(13)) {
+    // Ace-high straight (10-J-Q-K-A): meld.js's isStraight treats the ace as
+    // structurally high in this shape, so for top-card comparison it must
+    // outrank a K-high straight (9-10-J-Q-K), not tie with it. This is
+    // specific to straights — flush/tong comparisons keep A low (order 1).
+    return 14;
+  }
+  return Math.max(...orders);
 }
 
 function toMeldClaimants(players) {

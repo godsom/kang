@@ -85,6 +85,25 @@ describe('resolveMeldWin', () => {
     // both have K/A as top card by face value, but A is always low (RANK_ORDER.A = 1) -> p1's K wins
     expect(resolveMeldWin(claimants)).toEqual({ winners: ['p1'], reason: 'flush' });
   });
+
+  test('ace-high straight (10-J-Q-K-A) beats a king-high straight (9-10-J-Q-K)', () => {
+    const claimants = [
+      { playerId: 'p1', valid: true, type: 'straight', meldCards: [c('9', 's'), c('10', 's'), c('J', 's'), c('Q', 's'), c('K', 's')] },
+      { playerId: 'p2', valid: true, type: 'straight', meldCards: [c('10', 'h'), c('J', 'h'), c('Q', 'h'), c('K', 'h'), c('A', 'h')] },
+    ];
+    // p2's straight is ace-high (10-J-Q-K-A), structurally stronger than p1's king-high straight,
+    // even though RANK_ORDER.A = 1 -> p2 must win outright, not tie with p1.
+    expect(resolveMeldWin(claimants)).toEqual({ winners: ['p2'], reason: 'straight' });
+  });
+
+  test('an ace-low straight (A-2-3-4-5) is not mistaken for ace-high and still loses to a higher straight', () => {
+    const claimants = [
+      { playerId: 'p1', valid: true, type: 'straight', meldCards: [c('A', 's'), c('2', 's'), c('3', 's'), c('4', 's'), c('5', 's')] },
+      { playerId: 'p2', valid: true, type: 'straight', meldCards: [c('4', 'h'), c('5', 'h'), c('6', 'h'), c('7', 'h'), c('8', 'h')] },
+    ];
+    // p1's hand contains an ace but no king, so it must NOT trigger the ace-high exception -> p2 (top card 8) wins.
+    expect(resolveMeldWin(claimants)).toEqual({ winners: ['p2'], reason: 'straight' });
+  });
 });
 
 describe('getPayoutMultiplier', () => {
