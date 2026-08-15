@@ -52,6 +52,11 @@ Background Worker (cron/queue) — leaderboard, streak recalculation
 - ผู้เล่นคนเดียวทำชุดได้ → **ชนะทันที**
 - มากกว่า 1 คนทำชุดได้ → เทียบ **หน้าไพ่สูงสุดของชุด** ใครสูงกว่าชนะ
 
+**เงื่อนไข "แคงด่วน" (แก้ไข — ผูกกับไพ่แต่ละใบ ไม่ใช่ผลรวม):**
+- ต้องประกาศใน **เทิร์นแรก** ของเกมเท่านั้น (ก่อนมีการทิ้ง/กินไพ่ใด ๆ) โดยประเมินจาก **มือเริ่มต้น 5 ใบที่แจกมา** (`HAND_SIZE`) — ไม่ใช่มือหลังจั่วเพิ่ม
+- ต้อง**ไม่มีไพ่ใบใดในมือมีแต้ม ≥ 8** เลย (กล่าวคือทุกใบต้องมีแต้ม < 8 ตาม `RANK_VALUE`)
+- ถ้ามีผู้เล่นเข้าเงื่อนไขมากกว่า 1 คน → แต้มรวมต่ำสุดชนะ; แต้มรวมเท่ากัน → เทียบชุดไพ่ (ตอง/Flush/Straight) หากมี ไม่งั้นแบ่งเงินกองกลาง (split pot)
+
 ### 2.3 ชุดไพ่ที่นับได้ (Meld)
 | ชุด | เงื่อนไข |
 |---|---|
@@ -206,12 +211,15 @@ function validateMeld(cards) {
 
 ### 5.3 ตรวจสอบผู้ชนะเมื่อแคง
 ```javascript
-function checkKaengWin(players) {
+function checkKaengWin(players, isFirstTurn) {
   const claimants = players.filter(p => p.declaredKaeng);
   if (claimants.length === 0) return null;
 
   claimants.forEach(p => p.handScore = calcHandScore(p.hand));
-  const eligible = claimants.filter(p => p.handScore < GAME_CONFIG.INSTANT_KAENG_THRESHOLD);
+  // "แคงด่วน" requires: declared on the first turn AND every card in hand < 8 (no single card >= 8)
+  const eligible = isFirstTurn
+    ? claimants.filter(p => p.hand.every(card => GAME_CONFIG.RANK_VALUE[card.rank] < GAME_CONFIG.INSTANT_KAENG_THRESHOLD))
+    : [];
 
   if (eligible.length === 0) return checkMeldBasedWin(claimants);
   if (eligible.length === 1) return { winner: eligible[0], reason: "instant_kaeng" };
