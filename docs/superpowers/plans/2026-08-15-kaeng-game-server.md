@@ -263,7 +263,7 @@ module.exports = { createRoomStore };
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx jest tests/server/room.test.js tests/server/roomStore.test.js`
-Expected: PASS (6 + 4 = 10 tests)
+Expected: PASS (8 + 4 = 12 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -985,7 +985,7 @@ Expected: PASS (5 tests)
 - [ ] **Step 7: Run the full suite**
 
 Run: `npx jest`
-Expected: PASS, all 12 test files (7 from Milestone 1 + 5 new), 55 + 10 + 9 + 7 + 4 + 5 = 90 tests total.
+Expected: PASS, all 12 test files (7 from Milestone 1 + 5 new), 55 + 12 + 9 + 7 + 4 + 5 = 92 tests total.
 
 - [ ] **Step 8: Commit**
 
