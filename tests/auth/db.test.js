@@ -19,6 +19,6 @@ describe('createPool', () => {
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`
     );
     const tableNames = result.rows.map(r => r.table_name);
-    expect(tableNames).toEqual(expect.arrayContaining(['users', 'wallets', 'transactions']));
+    expect(tableNames).toEqual(expect.arrayContaining(['users', 'wallets', 'transactions', 'match_history', 'player_stats']));
   });
 });
