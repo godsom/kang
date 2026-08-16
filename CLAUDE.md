@@ -42,7 +42,13 @@ Milestone 4's Auth/Wallet REST service is also implemented now, in `src/auth/`:
 
 It's backed by real PostgreSQL (see `docker-compose.yml`; run migrations via `scripts/migrate.js`) and is an internal ledger only — there is no real payment gateway. It is **not yet integrated** with the Socket.io game server: the game server still trusts client-supplied `userId` unverified, and wiring the game server up to validate JWTs issued by this service is deferred to future work.
 
-Milestones 5+ (voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+Milestone 5's voice-chat token issuance is also implemented now, in `src/voice/`:
+
+- `src/voice/tokens.js` — `createVoiceToken`, wraps `livekit-server-sdk` to produce a signed LiveKit JWT scoped to a room/identity with `canPublish`/`canSubscribe` grants.
+
+Wired into `src/server/socketServer.js`'s new `voice:join` handler: verifies the caller's real room membership (via the existing `getRoomForSocket` lookup, same pattern as every other handler) before issuing a token, rejecting with `voice:error` if the caller isn't a member of the requested room or if `role !== 'player'` (spectator voice access is deferred to Milestone 6, since spectator room membership doesn't exist yet). No client exists in this project (no browser/mobile UI has been built in any milestone), so this milestone is scoped to what a server can do — issuing a correctly-scoped credential — not actual WebRTC audio join/publish, which is inherently client-side work.
+
+Milestones 6+ (spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
 
 **Running tests:**
 ```
@@ -50,7 +56,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
-All tests currently pass (150/150 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, and the Milestone 4 Auth/Wallet service.
+All tests currently pass (157/157 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, the Milestone 4 Auth/Wallet service, and the Milestone 5 voice-chat token issuance.
 
 ## Intended architecture (per spec)
 
