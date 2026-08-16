@@ -37,6 +37,36 @@ describe('users', () => {
       await createUser(pool, 'carol', 'password1');
       await expect(createUser(pool, 'carol', 'password2')).rejects.toMatchObject({ code: '23505' });
     });
+
+    test('rolls back the user insert if the wallet insert fails (atomicity)', async () => {
+      // Wrap the real pool so the second query on the transaction client (the
+      // wallets insert) fails, simulating a crash/error between the two
+      // inserts. If createUser is properly transactional, the users row must
+      // NOT be left behind.
+      const realClient = await pool.connect();
+      const fakePool = {
+        connect: async () => {
+          let queryCount = 0;
+          return {
+            query: async (text, params) => {
+              queryCount += 1;
+              if (text.startsWith('INSERT INTO wallets')) {
+                throw new Error('simulated wallets insert failure');
+              }
+              return realClient.query(text, params);
+            },
+            release: () => realClient.release(),
+          };
+        },
+      };
+
+      await expect(createUser(fakePool, 'frank', 'password1')).rejects.toThrow(
+        'simulated wallets insert failure'
+      );
+
+      const result = await pool.query('SELECT * FROM users WHERE username = $1', ['frank']);
+      expect(result.rows.length).toBe(0);
+    });
   });
 
   describe('verifyCredentials', () => {
