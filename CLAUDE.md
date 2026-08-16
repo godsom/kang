@@ -31,7 +31,18 @@ Milestone 3's gameplay actions — `game:draw`, `game:discard`, `game:eat`, `gam
 
 These are wired into `src/server/socketServer.js`'s `game:draw`, `game:discard`, `game:eat`, and `game:kaeng` handlers. The game is now fully playable end-to-end: join → ready → deal → draw/discard/eat/kaeng → round result → back to waiting.
 
-Milestones 4+ (client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+Milestone 4's Auth/Wallet REST service is also implemented now, in `src/auth/`:
+
+- `src/auth/db.js` — Postgres pool creation (`createPool`, reads `DATABASE_URL`).
+- `src/auth/users.js` — user registration (`createUser`, bcrypt-hashed passwords, transactional user+wallet creation) and login (`verifyCredentials`).
+- `src/auth/tokens.js` — JWT signing/verification (`signToken`, `verifyToken`, reads `JWT_SECRET`).
+- `src/auth/wallet.js` — wallet balance reads and transactional balance adjustments (`getBalance`, `adjustBalance`).
+- `src/auth/server.js` — Express app wiring: `POST /register`, `POST /login`, `GET /wallet/me`, `POST /wallet/adjust`.
+- `src/auth/index.js` — service entry point; loads `.env` and runs as its own process on `AUTH_PORT` (`npm run start:auth`).
+
+It's backed by real PostgreSQL (see `docker-compose.yml`; run migrations via `scripts/migrate.js`) and is an internal ledger only — there is no real payment gateway. It is **not yet integrated** with the Socket.io game server: the game server still trusts client-supplied `userId` unverified, and wiring the game server up to validate JWTs issued by this service is deferred to future work.
+
+Milestones 5+ (voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
 
 **Running tests:**
 ```
@@ -39,7 +50,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
-All tests currently pass (121/121 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, and the Milestone 3 gameplay actions.
+All tests currently pass (150/150 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, and the Milestone 4 Auth/Wallet service.
 
 ## Intended architecture (per spec)
 
