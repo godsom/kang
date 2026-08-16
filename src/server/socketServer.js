@@ -1,7 +1,7 @@
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createRoomStore } = require('./roomStore');
-const { createRoom, addPlayer } = require('./room');
+const { createRoom, addPlayer, findPlayer } = require('./room');
 const { setPlayerReady, canStart, startRound } = require('./roomLifecycle');
 const { getPlayerView } = require('./playerView');
 const { disconnectPlayer } = require('./roomConnection');
@@ -57,6 +57,10 @@ function createSocketServer() {
       socketIndex.delete(socket.id);
       const room = roomStore.get(entry.roomId);
       if (!room) return;
+      const player = findPlayer(room, entry.userId);
+      // If a newer socket has already reconnected this player (e.g. a rejoin
+      // landing before this stale disconnect is processed), ignore it.
+      if (!player || player.socketId !== socket.id) return;
       const { room: updatedRoom } = disconnectPlayer(room, entry.userId);
       if (updatedRoom.players.length === 0) {
         roomStore.delete(entry.roomId);

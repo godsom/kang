@@ -124,6 +124,47 @@ describe('socketServer', () => {
     expect(aliceView.hand).toEqual(aliceHandBeforeDisconnect);
   });
 
+  test('a stale disconnect from an old socket does not clobber a player who already reconnected', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room4', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    // Simulate the rejoin arriving BEFORE the old socket's disconnect is
+    // processed: rebind alice's player to a new socket while the original
+    // socket is still open.
+    const aliceReconnect = connectClient();
+    await waitForEvent(aliceReconnect, 'connect');
+    const aliceReconnectStates = collectEvents(aliceReconnect, 'room:state');
+    aliceReconnect.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    await waitUntil(() => aliceReconnectStates.length >= 1);
+    expect(aliceReconnectStates[aliceReconnectStates.length - 1].players.find(p => p.userId === 'alice').connected).toBe(true);
+
+    // Now the original (stale) socket's disconnect finally arrives.
+    const bobStatesBeforeStaleDisconnect = bobStates.length;
+    alice.close();
+
+    // Force a fresh broadcast so we can observe the resulting state.
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => bobStates.length > bobStatesBeforeStaleDisconnect);
+
+    const finalBobState = bobStates[bobStates.length - 1];
+    const aliceEntry = finalBobState.players.find(p => p.userId === 'alice');
+    expect(aliceEntry).toBeDefined();
+    expect(aliceEntry.connected).toBe(true);
+  });
+
   test('disconnecting while the room is waiting frees the seat', async () => {
     const alice = connectClient();
     const bob = connectClient();
