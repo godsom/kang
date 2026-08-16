@@ -11,8 +11,8 @@ function collectEvents(socket, event) {
 function waitUntil(conditionFn, { timeout = 2000, interval = 20 } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
-    const check = () => {
-      if (conditionFn()) return resolve();
+    const check = async () => {
+      if (await conditionFn()) return resolve();
       if (Date.now() - start > timeout) return reject(new Error('waitUntil timed out'));
       setTimeout(check, interval);
     };

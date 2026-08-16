@@ -6,10 +6,11 @@ const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
 const card = (rank, suit) => ({ rank, suit });
 
 describe('socketServer', () => {
-  let httpServer, io, roomStore, port, clients;
+  let server, httpServer, io, roomStore, port, clients;
 
   beforeEach((done) => {
-    ({ httpServer, io, roomStore } = createSocketServer());
+    server = createSocketServer();
+    ({ httpServer, io, roomStore } = server);
     httpServer.listen(() => {
       port = httpServer.address().port;
       done();
@@ -17,10 +18,16 @@ describe('socketServer', () => {
     clients = [];
   });
 
-  afterEach((done) => {
+  afterEach(async () => {
     clients.forEach(c => c.close());
+    if (server.redisClient && server.redisClient.isOpen) {
+      await server.redisClient.quit();
+    }
+    if (server.pool) {
+      await server.pool.end();
+    }
     io.close();
-    httpServer.close(done);
+    await new Promise(resolve => httpServer.close(resolve));
   });
 
   function connectClient() {
@@ -553,5 +560,82 @@ describe('socketServer', () => {
     const decoded = jwt.verify(payload.token, process.env.LIVEKIT_API_SECRET);
     expect(decoded.video.canPublish).toBe(false);
     expect(decoded.video.canSubscribe).toBe(true);
+  });
+
+  test('a finished round is persisted to match history and the winner appears on the leaderboard', async () => {
+    // Identifiers are suffixed per run: match_history/player_stats/the Redis
+    // leaderboard persist in a real, un-truncated database across test runs, so a
+    // fixed userId would let a *stale* row from an earlier run satisfy the
+    // "row exists" poll below before this round's own write has actually landed.
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const statsAliceId = `stats-alice-${runId}`;
+    const statsBobId = `stats-bob-${runId}`;
+    const roomId = `stats-room-${runId}`;
+
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('room:join', { roomId, userId: statsAliceId });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId, userId: statsBobId });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    // Stack the active player's hand with a guaranteed-winning instant-kaeng hand.
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === statsAliceId ? alice : bob;
+    const room = server.roomStore.get(roomId);
+    const activePlayer = room.players.find(p => p.userId === activeUserId);
+    activePlayer.hand = [
+      { rank: 'A', suit: 'spades' }, { rank: '2', suit: 'hearts' }, { rank: '3', suit: 'clubs' },
+      { rank: 'A', suit: 'diamonds' }, { rank: '2', suit: 'clubs' },
+    ];
+
+    const resultPromise = waitForEvent(activeClient, 'game:result');
+    activeClient.emit('game:kaeng');
+    await resultPromise;
+
+    // Persistence happens after the broadcast; poll briefly for the async write to land.
+    await waitUntil(async () => {
+      const rows = await server.pool.query('SELECT * FROM match_history WHERE player_id = $1', [activeUserId]);
+      return rows.rows.length >= 1;
+    }, { timeout: 3000 });
+
+    const history = await server.pool.query(
+      'SELECT result, win_type FROM match_history WHERE player_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [activeUserId]
+    );
+    expect(history.rows[0]).toMatchObject({ result: 'win', win_type: 'instant_kaeng' });
+
+    if (!server.redisClient.isOpen) await server.redisClient.connect();
+    const score = await server.redisClient.zScore('leaderboard:wins', activeUserId);
+    expect(Number(score)).toBeGreaterThanOrEqual(1);
+  });
+
+  test('leaderboard:get returns the current standings', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+
+    if (!server.redisClient.isOpen) await server.redisClient.connect();
+    await server.redisClient.zAdd('leaderboard:wins', [{ score: 5, value: 'leaderboard-test-player' }]);
+
+    const resultPromise = waitForEvent(alice, 'leaderboard:result');
+    alice.emit('leaderboard:get', { type: 'wins', limit: 10 });
+    const payload = await resultPromise;
+
+    expect(payload.type).toBe('wins');
+    expect(payload.entries).toEqual(
+      expect.arrayContaining([{ playerId: 'leaderboard-test-player', score: 5 }])
+    );
+
+    await server.redisClient.zRem('leaderboard:wins', 'leaderboard-test-player');
   });
 });

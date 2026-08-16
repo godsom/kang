@@ -10,12 +10,28 @@ const { applyDraw, applyDiscard, applyEat } = require('./turnActions');
 const { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound } = require('./roundEnd');
 const { VOICE_CONFIG } = require('../config');
 const { createVoiceToken } = require('../voice/tokens');
+const { createPool } = require('../auth/db');
+const { createRedisClient } = require('./redisClient');
+const { recordRoundOutcome, getLeaderboard } = require('./stats');
 
 function createSocketServer() {
   const httpServer = createServer();
   const io = new Server(httpServer, { cors: { origin: '*' } });
   const roomStore = createRoomStore();
   const socketIndex = new Map(); // socket.id -> { roomId, userId }
+  const pool = createPool();
+  const redisClient = createRedisClient();
+  let redisConnectPromise = null;
+
+  function ensureRedisConnected() {
+    if (redisClient.isOpen) {
+      return Promise.resolve();
+    }
+    if (!redisConnectPromise) {
+      redisConnectPromise = redisClient.connect();
+    }
+    return redisConnectPromise;
+  }
 
   function broadcastRoomState(room) {
     room.players.forEach(player => {
@@ -50,10 +66,16 @@ function createSocketServer() {
     });
   }
 
-  function endRound(room, result) {
+  async function endRound(room, result) {
     const outcome = finishRound(room, result);
     broadcastGameResult(room, outcome);
     broadcastRoomState(room);
+    try {
+      await ensureRedisConnected();
+      await recordRoundOutcome(pool, redisClient, room, outcome);
+    } catch (err) {
+      console.error('Failed to record round outcome:', err.message);
+    }
   }
 
   function getRoomForSocket(socket) {
@@ -190,6 +212,16 @@ function createSocketServer() {
       });
     });
 
+    socket.on('leaderboard:get', async ({ type, limit }) => {
+      try {
+        await ensureRedisConnected();
+        const entries = await getLeaderboard(redisClient, type, limit);
+        socket.emit('leaderboard:result', { type: type || 'wins', entries });
+      } catch (err) {
+        socket.emit('leaderboard:error', { message: 'Failed to fetch leaderboard' });
+      }
+    });
+
     socket.on('disconnect', () => {
       const entry = socketIndex.get(socket.id);
       if (!entry) return;
@@ -220,7 +252,7 @@ function createSocketServer() {
     });
   });
 
-  return { httpServer, io, roomStore };
+  return { httpServer, io, roomStore, pool, redisClient };
 }
 
 module.exports = { createSocketServer };
