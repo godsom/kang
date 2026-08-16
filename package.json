@@ -25,6 +25,7 @@
     "testPathIgnorePatterns": [
       "/node_modules/",
       "<rootDir>/.claude/"
-    ]
+    ],
+    "maxWorkers": 1
   }
 }
