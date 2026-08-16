@@ -24,6 +24,11 @@ describe('createRoom', () => {
     expect(room.direction).toBe('alternating');
     expect(room.eatMode).toBe('sequential_beat');
   });
+
+  test('includes an empty spectators array', () => {
+    const room = createRoom('room1');
+    expect(room.spectators).toEqual([]);
+  });
 });
 
 describe('addPlayer', () => {

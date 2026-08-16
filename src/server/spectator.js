@@ -1,0 +1,26 @@
+const { SPECTATOR_CONFIG } = require('../config');
+
+function findSpectator(room, userId) {
+  return room.spectators.find(s => s.userId === userId) || null;
+}
+
+function addSpectator(room, userId, socketId) {
+  const existing = findSpectator(room, userId);
+  if (existing) {
+    existing.socketId = socketId;
+    return { room, spectator: existing, reconnected: true };
+  }
+  if (room.spectators.length >= SPECTATOR_CONFIG.maxPerRoom) {
+    throw new Error('Room is full of spectators');
+  }
+  const spectator = { userId, socketId };
+  room.spectators.push(spectator);
+  return { room, spectator, reconnected: false };
+}
+
+function removeSpectator(room, userId) {
+  room.spectators = room.spectators.filter(s => s.userId !== userId);
+  return room;
+}
+
+module.exports = { findSpectator, addSpectator, removeSpectator };

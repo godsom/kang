@@ -6,6 +6,7 @@ function createRoom(id, direction = GAME_CONFIG.DIRECTION.ONE_WAY, eatMode = GAM
   return {
     id,
     players: [],
+    spectators: [],
     direction,
     eatMode,
     deck: [],
