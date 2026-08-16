@@ -140,14 +140,20 @@ function createSocketServer() {
         socket.emit('voice:error', { message: 'Only player voice access is supported currently' });
         return;
       }
-      const token = await createVoiceToken({
-        apiKey: process.env.LIVEKIT_API_KEY,
-        apiSecret: process.env.LIVEKIT_API_SECRET,
-        roomName: ctx.room.id,
-        identity: ctx.userId,
-        canPublish: true,
-        canSubscribe: true,
-      });
+      let token;
+      try {
+        token = await createVoiceToken({
+          apiKey: process.env.LIVEKIT_API_KEY,
+          apiSecret: process.env.LIVEKIT_API_SECRET,
+          roomName: ctx.room.id,
+          identity: ctx.userId,
+          canPublish: true,
+          canSubscribe: true,
+        });
+      } catch (err) {
+        socket.emit('voice:error', { message: 'Failed to issue voice token' });
+        return;
+      }
       socket.emit('voice:token', {
         token,
         url: process.env.LIVEKIT_URL,

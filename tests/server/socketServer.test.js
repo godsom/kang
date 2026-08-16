@@ -409,4 +409,23 @@ describe('socketServer', () => {
     const error = await errorPromise;
     expect(error.message).toBe('Only player voice access is supported currently');
   });
+
+  test('voice:join emits voice:error instead of hanging or crashing when token issuance fails', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'voice-room-4', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const originalApiKey = process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_KEY;
+    try {
+      const errorPromise = waitForEvent(alice, 'voice:error');
+      alice.emit('voice:join', { roomId: 'voice-room-4', role: 'player' });
+      const error = await errorPromise;
+      expect(error.message).toBe('Failed to issue voice token');
+    } finally {
+      process.env.LIVEKIT_API_KEY = originalApiKey;
+    }
+  });
 });
