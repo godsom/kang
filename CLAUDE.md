@@ -14,7 +14,19 @@ Milestone 1 (per the spec's §7 build order) is implemented: the core game engin
 - `src/turn.js` — turn-direction / play-mode logic.
 - `src/win.js` — win-condition and payout resolution.
 
-Milestones 2+ (game server, client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+Milestone 2's game server — room management, state sync, and reconnect handling (Socket.io) — is also implemented, in `src/server/`:
+
+- `src/server/room.js` — room/player creation, join/leave, `findPlayer`.
+- `src/server/roomStore.js` — in-memory room storage (stand-in for the spec's Redis room state).
+- `src/server/roomLifecycle.js` — ready-up and round-start logic.
+- `src/server/playerView.js` — per-player/spectator state filtering (`getPlayerView`).
+- `src/server/roomConnection.js` — disconnect/reconnect handling (`disconnectPlayer`).
+- `src/server/socketServer.js` — Socket.io wiring: `room:join`, `player:ready`, `disconnect` handlers and broadcast.
+- `src/server/index.js` — server entry point.
+
+Gameplay actions themselves — `game:draw`, `game:discard`, `game:eat`, `game:kaeng` — are **explicitly not wired yet**. That's a deliberate scope boundary for Milestone 2 as planned (room lifecycle and connection state only), not a gap; wiring those actions is a separate follow-up plan.
+
+Milestones 3+ (client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
 
 **Running tests:**
 ```
@@ -22,6 +34,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
+All tests currently pass (93/93 via Jest), covering both the Milestone 1 game engine and the Milestone 2 game server.
 
 ## Intended architecture (per spec)
 
