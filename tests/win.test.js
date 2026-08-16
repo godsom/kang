@@ -116,6 +116,10 @@ describe('getPayoutMultiplier', () => {
     expect(getPayoutMultiplier('straight')).toBe(3);
   });
 
+  test('deck_exhausted maps to the instantKaeng multiplier', () => {
+    expect(getPayoutMultiplier('deck_exhausted')).toBe(1);
+  });
+
   test('throws on an unknown reason', () => {
     expect(() => getPayoutMultiplier('nonsense')).toThrow('Unknown win reason: nonsense');
   });

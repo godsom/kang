@@ -72,6 +72,7 @@ function getPayoutMultiplier(reason) {
   }
   if (reason === 'tong') return PAYOUT.tong;
   if (reason === 'flush' || reason === 'straight') return PAYOUT.flushOrStraight;
+  if (reason === 'deck_exhausted') return PAYOUT.instantKaeng;
   throw new Error(`Unknown win reason: ${reason}`);
 }
 
