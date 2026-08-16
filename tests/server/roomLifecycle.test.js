@@ -82,4 +82,13 @@ describe('startRound', () => {
     startRound(room);
     expect(room.dealerId).toBe('alice');
   });
+
+  test('resets turn-action flags for the new round', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1');
+    addPlayer(room, 'bob', 's2');
+    startRound(room);
+    expect(room.awaitingDiscard).toBe(false);
+    expect(room.lastDiscardWasEat).toBe(false);
+  });
 });

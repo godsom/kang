@@ -32,6 +32,8 @@ function startRound(room) {
   room.turnIndex = room.players.findIndex(p => p.userId === room.dealerId);
   room.directionSign = 1;
   room.isFirstTurn = true;
+  room.awaitingDiscard = false;
+  room.lastDiscardWasEat = false;
   room.status = ROOM_STATUS.IN_PROGRESS;
   return room;
 }
