@@ -3,8 +3,9 @@ const { Server } = require('socket.io');
 const { createRoomStore } = require('./roomStore');
 const { createRoom, addPlayer, findPlayer } = require('./room');
 const { setPlayerReady, canStart, startRound } = require('./roomLifecycle');
-const { getPlayerView } = require('./playerView');
+const { getPlayerView, getSpectatorView } = require('./playerView');
 const { disconnectPlayer } = require('./roomConnection');
+const { addSpectator, removeSpectator } = require('./spectator');
 const { applyDraw, applyDiscard, applyEat } = require('./turnActions');
 const { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound } = require('./roundEnd');
 const { VOICE_CONFIG } = require('../config');
@@ -23,11 +24,26 @@ function createSocketServer() {
         socket.emit('room:state', getPlayerView(room, player.userId));
       }
     });
+    if (room.spectators.length > 0) {
+      const spectatorView = getSpectatorView(room);
+      room.spectators.forEach(spectator => {
+        const socket = io.sockets.sockets.get(spectator.socketId);
+        if (socket) {
+          socket.emit('room:state', spectatorView);
+        }
+      });
+    }
   }
 
   function broadcastGameResult(room, outcome) {
     room.players.forEach(player => {
       const socket = io.sockets.sockets.get(player.socketId);
+      if (socket) {
+        socket.emit('game:result', outcome);
+      }
+    });
+    room.spectators.forEach(spectator => {
+      const socket = io.sockets.sockets.get(spectator.socketId);
       if (socket) {
         socket.emit('game:result', outcome);
       }
@@ -45,15 +61,27 @@ function createSocketServer() {
     if (!entry) return null;
     const room = roomStore.get(entry.roomId);
     if (!room) return null;
-    return { room, userId: entry.userId };
+    return { room, userId: entry.userId, isSpectator: entry.isSpectator };
   }
 
   io.on('connection', (socket) => {
-    socket.on('room:join', ({ roomId, userId }) => {
+    socket.on('room:join', ({ roomId, userId, asSpectator }) => {
       let room = roomStore.get(roomId);
       if (!room) {
         room = createRoom(roomId);
         roomStore.set(roomId, room);
+      }
+      if (asSpectator) {
+        try {
+          addSpectator(room, userId, socket.id);
+        } catch (err) {
+          socket.emit('room:error', { message: err.message });
+          return;
+        }
+        socketIndex.set(socket.id, { roomId, userId, isSpectator: true });
+        socket.join(roomId);
+        broadcastRoomState(room);
+        return;
       }
       try {
         addPlayer(room, userId, socket.id);
@@ -61,7 +89,7 @@ function createSocketServer() {
         socket.emit('room:error', { message: err.message });
         return;
       }
-      socketIndex.set(socket.id, { roomId, userId });
+      socketIndex.set(socket.id, { roomId, userId, isSpectator: false });
       socket.join(roomId);
       broadcastRoomState(room);
     });
@@ -136,8 +164,9 @@ function createSocketServer() {
         socket.emit('voice:error', { message: 'Not a member of this room' });
         return;
       }
-      if (role !== 'player') {
-        socket.emit('voice:error', { message: 'Only player voice access is supported currently' });
+      const expectedRole = ctx.isSpectator ? 'spectator' : 'player';
+      if (role !== expectedRole) {
+        socket.emit('voice:error', { message: `Only ${expectedRole} voice access is available for this membership` });
         return;
       }
       let token;
@@ -147,7 +176,7 @@ function createSocketServer() {
           apiSecret: process.env.LIVEKIT_API_SECRET,
           roomName: ctx.room.id,
           identity: ctx.userId,
-          canPublish: true,
+          canPublish: !ctx.isSpectator,
           canSubscribe: true,
         });
       } catch (err) {
@@ -167,12 +196,23 @@ function createSocketServer() {
       socketIndex.delete(socket.id);
       const room = roomStore.get(entry.roomId);
       if (!room) return;
+
+      if (entry.isSpectator) {
+        removeSpectator(room, entry.userId);
+        if (room.players.length === 0 && room.spectators.length === 0) {
+          roomStore.delete(entry.roomId);
+          return;
+        }
+        broadcastRoomState(room);
+        return;
+      }
+
       const player = findPlayer(room, entry.userId);
       // If a newer socket has already reconnected this player (e.g. a rejoin
       // landing before this stale disconnect is processed), ignore it.
       if (!player || player.socketId !== socket.id) return;
       const { room: updatedRoom } = disconnectPlayer(room, entry.userId);
-      if (updatedRoom.players.length === 0) {
+      if (updatedRoom.players.length === 0 && updatedRoom.spectators.length === 0) {
         roomStore.delete(entry.roomId);
         return;
       }

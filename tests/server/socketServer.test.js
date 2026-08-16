@@ -407,7 +407,7 @@ describe('socketServer', () => {
     const errorPromise = waitForEvent(alice, 'voice:error');
     alice.emit('voice:join', { roomId: 'voice-room-3', role: 'spectator' });
     const error = await errorPromise;
-    expect(error.message).toBe('Only player voice access is supported currently');
+    expect(error.message).toBe('Only player voice access is available for this membership');
   });
 
   test('voice:join emits voice:error instead of hanging or crashing when token issuance fails', async () => {
@@ -427,5 +427,103 @@ describe('socketServer', () => {
     } finally {
       process.env.LIVEKIT_API_KEY = originalApiKey;
     }
+  });
+
+  test('a spectator can join a room and receives a filtered room:state with no hands', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    const spectator = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect'), waitForEvent(spectator, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const specStates = collectEvents(spectator, 'room:state');
+
+    alice.emit('room:join', { roomId: 'spec-room-1', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'spec-room-1', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+    spectator.emit('room:join', { roomId: 'spec-room-1', userId: 'watcher', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => specStates[specStates.length - 1].status === 'in_progress');
+
+    const specView = specStates[specStates.length - 1];
+    specView.players.forEach(p => {
+      expect('hand' in p).toBe(false);
+      expect(p.handCount).toBe(5);
+    });
+  });
+
+  test('a spectator can join a full or in-progress room where a player join would fail', async () => {
+    const clients = [];
+    for (let i = 0; i < 5; i++) {
+      const c = connectClient();
+      await waitForEvent(c, 'connect');
+      const states = collectEvents(c, 'room:state');
+      c.emit('room:join', { roomId: 'spec-room-2', userId: `p${i}` });
+      await waitUntil(() => states.length >= 1);
+      clients.push(c);
+    }
+
+    const spectator = connectClient();
+    await waitForEvent(spectator, 'connect');
+    const specStates = collectEvents(spectator, 'room:state');
+    spectator.emit('room:join', { roomId: 'spec-room-2', userId: 'watcher', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    expect(specStates[0].players).toHaveLength(5);
+  });
+
+  test('a room with a departed player but a remaining spectator is not deleted', async () => {
+    const alice = connectClient();
+    const spectator = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'spec-room-3', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const specStates = collectEvents(spectator, 'room:state');
+    spectator.emit('room:join', { roomId: 'spec-room-3', userId: 'watcher', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    alice.close(); // room is 'waiting', so this removes alice outright (Milestone 2 behavior) — 0 players, 1 spectator
+    await waitUntil(() => specStates[specStates.length - 1].players.length === 0);
+
+    // If the room had been deleted from the store, a fresh join would create a brand-new empty room;
+    // instead it must still be the SAME room the spectator is watching, reflected via a normal broadcast.
+    const bob = connectClient();
+    await waitForEvent(bob, 'connect');
+    const bobStates = collectEvents(bob, 'room:state');
+    bob.emit('room:join', { roomId: 'spec-room-3', userId: 'bob' });
+    await waitUntil(() => specStates.length >= 3); // spectator gets a broadcast when bob joins the (still-alive) room
+    await waitUntil(() => bobStates.length >= 1);
+    expect(bobStates[0].players.map(p => p.userId)).toEqual(['bob']);
+  });
+
+  test('a spectator gets a subscribe-only voice token', async () => {
+    const alice = connectClient();
+    const spectator = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'spec-voice-1', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const specStates = collectEvents(spectator, 'room:state');
+    spectator.emit('room:join', { roomId: 'spec-voice-1', userId: 'watcher', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    const tokenPromise = waitForEvent(spectator, 'voice:token');
+    spectator.emit('voice:join', { roomId: 'spec-voice-1', role: 'spectator' });
+    const payload = await tokenPromise;
+
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(payload.token, process.env.LIVEKIT_API_SECRET);
+    expect(decoded.video.canPublish).toBe(false);
+    expect(decoded.video.canSubscribe).toBe(true);
   });
 });
