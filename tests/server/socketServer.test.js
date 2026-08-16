@@ -1,3 +1,4 @@
+require('dotenv').config();
 const Client = require('socket.io-client');
 const { createSocketServer } = require('../../src/server/socketServer');
 const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
@@ -365,5 +366,47 @@ describe('socketServer', () => {
     expect(aliceResults.length).toBe(0);
     expect(bobResults.length).toBe(0);
     expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
+  });
+
+  test('voice:join issues a token for a real room member requesting the player role', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'voice-room-1', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const tokenPromise = waitForEvent(alice, 'voice:token');
+    alice.emit('voice:join', { roomId: 'voice-room-1', role: 'player' });
+    const payload = await tokenPromise;
+
+    expect(payload.token).toBeDefined();
+    expect(payload.url).toBeDefined();
+    expect(typeof payload.pushToTalk).toBe('boolean');
+  });
+
+  test('voice:join rejects a caller who is not a member of the requested room', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'voice-room-2', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const errorPromise = waitForEvent(alice, 'voice:error');
+    alice.emit('voice:join', { roomId: 'some-other-room', role: 'player' });
+    const error = await errorPromise;
+    expect(error.message).toBe('Not a member of this room');
+  });
+
+  test('voice:join rejects an unsupported role', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'voice-room-3', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const errorPromise = waitForEvent(alice, 'voice:error');
+    alice.emit('voice:join', { roomId: 'voice-room-3', role: 'spectator' });
+    const error = await errorPromise;
+    expect(error.message).toBe('Only player voice access is supported currently');
   });
 });

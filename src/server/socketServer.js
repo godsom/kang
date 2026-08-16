@@ -7,6 +7,8 @@ const { getPlayerView } = require('./playerView');
 const { disconnectPlayer } = require('./roomConnection');
 const { applyDraw, applyDiscard, applyEat } = require('./turnActions');
 const { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound } = require('./roundEnd');
+const { VOICE_CONFIG } = require('../config');
+const { createVoiceToken } = require('../voice/tokens');
 
 function createSocketServer() {
   const httpServer = createServer();
@@ -126,6 +128,31 @@ function createSocketServer() {
         return;
       }
       endRound(ctx.room, result);
+    });
+
+    socket.on('voice:join', async ({ roomId, role }) => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx || ctx.room.id !== roomId) {
+        socket.emit('voice:error', { message: 'Not a member of this room' });
+        return;
+      }
+      if (role !== 'player') {
+        socket.emit('voice:error', { message: 'Only player voice access is supported currently' });
+        return;
+      }
+      const token = await createVoiceToken({
+        apiKey: process.env.LIVEKIT_API_KEY,
+        apiSecret: process.env.LIVEKIT_API_SECRET,
+        roomName: ctx.room.id,
+        identity: ctx.userId,
+        canPublish: true,
+        canSubscribe: true,
+      });
+      socket.emit('voice:token', {
+        token,
+        url: process.env.LIVEKIT_URL,
+        pushToTalk: VOICE_CONFIG.pushToTalk,
+      });
     });
 
     socket.on('disconnect', () => {
