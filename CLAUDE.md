@@ -56,7 +56,16 @@ Milestone 6's spectator system is also implemented now, in `src/server/spectator
 
 Spectators can join a room regardless of its status (`waiting`/`in_progress`/`finished`) or current player count. A previously latent bug where a room was wrongly deleted when the last player disconnected — even if spectators were still present — is now fixed; a room is only torn down once it has no players and no spectators.
 
-Milestones 7+ (leaderboard/stats) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+Milestone 7's leaderboard/stats persistence is also implemented now, extending `db/schema.sql` (Milestone 4's schema file) with two new tables, plus a new `src/server/stats.js` and `src/server/redisClient.js`:
+
+- `db/schema.sql` — adds `match_history` (one row per player per finished round: result, win type, multiplier, hand score) and `player_stats` (running totals: games played, wins by type, losses, current/best streak). Neither table has a foreign key to the `users` table — `player_id` is a plain string, matching the game server's existing unauthenticated `userId` model (the game server still doesn't integrate with the Auth service, per Milestone 4's note above).
+- `src/server/redisClient.js` — `createRedisClient`, this project's first actual use of the Redis container `docker-compose.yml` has provisioned since Milestone 0.
+- `src/server/stats.js` — `recordRoundOutcome(pool, redisClient, room, outcome)` is the integration point: for every player in a finished round, records a `match_history` row and updates their `player_stats` (win-type bucketing reuses `src/win.js`'s existing payout-tier grouping); for each winner, increments a Redis sorted set (`leaderboard:wins`) via `recordWin`. `getLeaderboard(redisClient, type, limit)` reads ONLY from Redis, never Postgres, per the spec's non-negotiable rule below.
+- `src/server/socketServer.js` — `endRound` now calls `recordRoundOutcome` after broadcasting `game:result`/`room:state` (a persistence failure is caught and logged, never blocks or corrupts the broadcast); a new `leaderboard:get` handler reads the Redis-cached standings.
+
+**Important, honest scope note:** `net_profit`/`pot_amount` are always recorded as `0`. No real stake/payout amount is computed anywhere in this codebase — that requires the wallet integration Milestones 3 and 4 both explicitly deferred (the game server has never called the Auth/Wallet service). The leaderboard therefore ranks by win count (`leaderboard:wins`), not profit — spec §5.5's `leaderboard:profit` design would be meaningless when profit is always zero. Wiring a real payout amount into round outcomes, and switching the leaderboard to rank by actual profit, is future work once the game server and Auth service are integrated.
+
+**Project status: all 7 milestones from the spec's §7 build order are implemented, except #3 (basic client UI) and #8 (anti-cheat audit pass).** No browser/mobile client was ever built in this project — every milestone from Milestone 2 onward is server-only, tested via `socket.io-client`/`supertest` integration tests rather than a real UI. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for any future client or audit work.
 
 **Running tests:**
 ```
@@ -64,7 +73,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
-All tests currently pass (174/174 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, the Milestone 4 Auth/Wallet service, the Milestone 5 voice-chat token issuance, and the Milestone 6 spectator system.
+Tests require the dockerized dev stack running (`docker compose up -d` — Postgres, Redis, and LiveKit; see `docker-compose.yml` and `.env.example`) and a migrated schema (`node scripts/migrate.js`). All tests currently pass (184/184 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, the Milestone 4 Auth/Wallet service, the Milestone 5 voice-chat token issuance, the Milestone 6 spectator system, and the Milestone 7 leaderboard/stats persistence.
 
 ## Intended architecture (per spec)
 
@@ -118,11 +127,11 @@ Recommended stack: Node.js + Socket.io (game server), Redis (room state/cache), 
 
 ## Suggested build order (spec §7)
 
-1. Core game engine (deck, dealing, meld validation, turn logic) — unit test before integrating with networking.
-2. Game server + Socket.io (room management, state sync, reconnect handling).
-3. Basic client UI (table, hand, draw/discard/kaeng actions).
-4. Wallet/Auth service as a separate service with transaction-safe PostgreSQL access.
-5. Voice chat (SFU) — publish/subscribe, mute controls.
-6. Spectator system with filtered state.
-7. Leaderboard/stats — match_history, player_stats, cron job, Redis cache.
-8. Anti-cheat audit pass — confirm all validation is server-side, RNG seeds logged.
+1. ✅ Core game engine (deck, dealing, meld validation, turn logic) — unit test before integrating with networking.
+2. ✅ Game server + Socket.io (room management, state sync, reconnect handling).
+3. ❌ Basic client UI (table, hand, draw/discard/kaeng actions) — **not built**; no browser/mobile client exists in this project.
+4. ✅ Wallet/Auth service as a separate service with transaction-safe PostgreSQL access — built, but not yet integrated with the game server.
+5. ✅ Voice chat (SFU) — token issuance only; no client to actually publish/subscribe audio.
+6. ✅ Spectator system with filtered state.
+7. ✅ Leaderboard/stats — match_history, player_stats, Redis cache (no cron job for streak recalculation — streaks are updated inline per round in `updatePlayerStats`, not via a background job).
+8. ❌ Anti-cheat audit pass — **not done**; this is a process/audit step, not a code deliverable, and hasn't been performed.
