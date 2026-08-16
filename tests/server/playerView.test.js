@@ -1,5 +1,5 @@
 const { createRoom, addPlayer } = require('../../src/server/room');
-const { getPlayerView } = require('../../src/server/playerView');
+const { getPlayerView, getSpectatorView } = require('../../src/server/playerView');
 
 function setup() {
   const room = createRoom('room1');
@@ -71,5 +71,46 @@ describe('getPlayerView', () => {
       turnIndex: 0,
       pot: 0,
     });
+  });
+});
+
+describe('getSpectatorView', () => {
+  test('never exposes any player\'s hand, not even structurally', () => {
+    const room = setup();
+    const view = getSpectatorView(room);
+    view.players.forEach(p => {
+      expect('hand' in p).toBe(false);
+    });
+    expect(view.players.find(p => p.userId === 'alice').handCount).toBe(2);
+    expect(view.players.find(p => p.userId === 'bob').handCount).toBe(1);
+  });
+
+  test('never exposes deck contents, only deckCount', () => {
+    const room = setup();
+    const view = getSpectatorView(room);
+    expect(view.deckCount).toBe(2);
+    expect(view.deck).toBeUndefined();
+  });
+
+  test('exposes only the top discard card and room-level fields', () => {
+    const room = setup();
+    const view = getSpectatorView(room);
+    expect(view.discardTop).toEqual({ suit: 'spades', rank: '9' });
+    expect(view).toMatchObject({
+      roomId: 'room1',
+      status: 'waiting',
+      direction: 'one_way',
+      eatMode: 'chain_eat',
+      dealerId: 'alice',
+      turnIndex: 0,
+      pot: 0,
+    });
+  });
+
+  test('marks isDealer correctly per player', () => {
+    const room = setup();
+    const view = getSpectatorView(room);
+    expect(view.players.find(p => p.userId === 'alice').isDealer).toBe(true);
+    expect(view.players.find(p => p.userId === 'bob').isDealer).toBe(false);
   });
 });
