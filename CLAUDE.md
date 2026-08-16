@@ -46,9 +46,17 @@ Milestone 5's voice-chat token issuance is also implemented now, in `src/voice/`
 
 - `src/voice/tokens.js` — `createVoiceToken`, wraps `livekit-server-sdk` to produce a signed LiveKit JWT scoped to a room/identity with `canPublish`/`canSubscribe` grants.
 
-Wired into `src/server/socketServer.js`'s new `voice:join` handler: verifies the caller's real room membership (via the existing `getRoomForSocket` lookup, same pattern as every other handler) before issuing a token, rejecting with `voice:error` if the caller isn't a member of the requested room or if `role !== 'player'` (spectator voice access is deferred to Milestone 6, since spectator room membership doesn't exist yet). No client exists in this project (no browser/mobile UI has been built in any milestone), so this milestone is scoped to what a server can do — issuing a correctly-scoped credential — not actual WebRTC audio join/publish, which is inherently client-side work.
+Wired into `src/server/socketServer.js`'s new `voice:join` handler: verifies the caller's real room membership (via the existing `getRoomForSocket` lookup, same pattern as every other handler) before issuing a token, rejecting with `voice:error` if the caller isn't a member of the requested room. Both players and spectators can obtain a voice token — spectators get a subscribe-only token (no `canPublish`), players get full publish/subscribe. No client exists in this project (no browser/mobile UI has been built in any milestone), so this milestone is scoped to what a server can do — issuing a correctly-scoped credential — not actual WebRTC audio join/publish, which is inherently client-side work.
 
-Milestones 6+ (spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+Milestone 6's spectator system is also implemented now, in `src/server/spectator.js`:
+
+- `src/server/spectator.js` — `findSpectator`, `addSpectator` (rejects a join if the `userId` is already a player in the room, and vice versa in `room.js`'s `addPlayer` — a `userId` can never be simultaneously a player and a spectator in the same room), `removeSpectator`.
+- `getSpectatorView` in `src/server/playerView.js` — filtered room state for spectators; never exposes any player's hand.
+- `src/server/socketServer.js` — `room:join`'s `asSpectator` flag routes to `addSpectator`/`removeSpectator` instead of `addPlayer`/`removePlayer`; `disconnect` and `voice:join` handlers were updated to account for spectator sockets.
+
+Spectators can join a room regardless of its status (`waiting`/`in_progress`/`finished`) or current player count. A previously latent bug where a room was wrongly deleted when the last player disconnected — even if spectators were still present — is now fixed; a room is only torn down once it has no players and no spectators.
+
+Milestones 7+ (leaderboard/stats) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
 
 **Running tests:**
 ```
@@ -56,7 +64,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
-All tests currently pass (157/157 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, the Milestone 4 Auth/Wallet service, and the Milestone 5 voice-chat token issuance.
+All tests currently pass (174/174 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, the Milestone 3 gameplay actions, the Milestone 4 Auth/Wallet service, the Milestone 5 voice-chat token issuance, and the Milestone 6 spectator system.
 
 ## Intended architecture (per spec)
 
