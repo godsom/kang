@@ -1,4 +1,5 @@
 const { ROOM_STATUS, createRoom, findPlayer, addPlayer, removePlayer } = require('../../src/server/room');
+const { addSpectator } = require('../../src/server/spectator');
 
 describe('createRoom', () => {
   test('creates a room with sensible defaults', () => {
@@ -69,6 +70,13 @@ describe('addPlayer', () => {
     room.status = ROOM_STATUS.IN_PROGRESS;
     const { reconnected } = addPlayer(room, 'alice', 'socket-2');
     expect(reconnected).toBe(true);
+  });
+
+  test('rejects a player join for a userId that is already a spectator', () => {
+    const room = createRoom('room1');
+    addSpectator(room, 'alice', 'ws1');
+    expect(() => addPlayer(room, 'alice', 'socket-1')).toThrow('Already a spectator in this room');
+    expect(room.players).toHaveLength(0);
   });
 });
 

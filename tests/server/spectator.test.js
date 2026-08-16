@@ -34,6 +34,13 @@ describe('addSpectator', () => {
     expect(reconnected).toBe(false);
     expect(room.spectators).toHaveLength(1);
   });
+
+  test('rejects a spectator join for a userId that is already a player', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 'ps1');
+    expect(() => addSpectator(room, 'alice', 'ws1')).toThrow('Already a player in this room');
+    expect(room.spectators).toHaveLength(0);
+  });
 });
 
 describe('removeSpectator', () => {

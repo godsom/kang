@@ -1,4 +1,5 @@
 const { SPECTATOR_CONFIG } = require('../config');
+const { findPlayer } = require('./room');
 
 function findSpectator(room, userId) {
   return room.spectators.find(s => s.userId === userId) || null;
@@ -9,6 +10,9 @@ function addSpectator(room, userId, socketId) {
   if (existing) {
     existing.socketId = socketId;
     return { room, spectator: existing, reconnected: true };
+  }
+  if (findPlayer(room, userId)) {
+    throw new Error('Already a player in this room');
   }
   if (room.spectators.length >= SPECTATOR_CONFIG.maxPerRoom) {
     throw new Error('Room is full of spectators');

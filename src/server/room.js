@@ -37,6 +37,12 @@ function addPlayer(room, userId, socketId) {
   if (room.players.length >= GAME_CONFIG.MAX_PLAYERS) {
     throw new Error('Room is full');
   }
+  // Lazy require avoids a circular top-level dependency: spectator.js
+  // requires findPlayer from this module at load time.
+  const { findSpectator } = require('./spectator');
+  if (findSpectator(room, userId)) {
+    throw new Error('Already a spectator in this room');
+  }
   const player = {
     userId,
     socketId,

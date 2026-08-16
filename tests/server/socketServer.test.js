@@ -90,6 +90,34 @@ describe('socketServer', () => {
     expect(error.message).toBe('Room is full');
   });
 
+  test('a userId cannot join as both a player and a spectator in the same room', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+    alice.emit('room:join', { roomId: 'dual-role-room', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    const aliceSpectate = connectClient();
+    await waitForEvent(aliceSpectate, 'connect');
+    const spectateErrorPromise = waitForEvent(aliceSpectate, 'room:error');
+    aliceSpectate.emit('room:join', { roomId: 'dual-role-room', userId: 'alice', asSpectator: true });
+    const spectateError = await spectateErrorPromise;
+    expect(spectateError.message).toBe('Already a player in this room');
+
+    const bobSpectate = connectClient();
+    await waitForEvent(bobSpectate, 'connect');
+    const bobStates = collectEvents(bobSpectate, 'room:state');
+    bobSpectate.emit('room:join', { roomId: 'dual-role-room', userId: 'bob', asSpectator: true });
+    await waitUntil(() => bobStates.length >= 1);
+
+    const bobJoinAsPlayer = connectClient();
+    await waitForEvent(bobJoinAsPlayer, 'connect');
+    const playerErrorPromise = waitForEvent(bobJoinAsPlayer, 'room:error');
+    bobJoinAsPlayer.emit('room:join', { roomId: 'dual-role-room', userId: 'bob' });
+    const playerError = await playerErrorPromise;
+    expect(playerError.message).toBe('Already a spectator in this room');
+  });
+
   test('disconnecting during an in-progress round preserves the hand on reconnect', async () => {
     const alice = connectClient();
     const bob = connectClient();
