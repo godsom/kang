@@ -24,12 +24,13 @@ function createSocketServer() {
   let redisConnectPromise = null;
 
   function ensureRedisConnected() {
+    if (redisConnectPromise) {
+      return redisConnectPromise;
+    }
     if (redisClient.isOpen) {
       return Promise.resolve();
     }
-    if (!redisConnectPromise) {
-      redisConnectPromise = redisClient.connect();
-    }
+    redisConnectPromise = redisClient.connect();
     return redisConnectPromise;
   }
 
