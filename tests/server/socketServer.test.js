@@ -180,4 +180,73 @@ describe('socketServer', () => {
     await waitUntil(() => bobStates[bobStates.length - 1].players.length === 1);
     expect(bobStates[bobStates.length - 1].players.find(p => p.userId === 'alice')).toBeUndefined();
   });
+
+  test('a full turn: draw then discard advances to the next player', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room4', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+    const activeStates = activeUserId === 'alice' ? aliceStates : bobStates;
+    const otherStates = activeUserId === 'alice' ? bobStates : aliceStates;
+
+    activeClient.emit('game:draw');
+    await waitUntil(() => {
+      const last = activeStates[activeStates.length - 1];
+      const me = last.players.find(p => p.userId === activeUserId);
+      return me.handCount === 6;
+    });
+
+    const myHand = activeStates[activeStates.length - 1].players.find(p => p.userId === activeUserId).hand;
+    activeClient.emit('game:discard', { card: myHand[0] });
+    await waitUntil(() => {
+      const last = otherStates[otherStates.length - 1];
+      return last.discardTop && last.discardTop.rank === myHand[0].rank && last.discardTop.suit === myHand[0].suit;
+    });
+
+    const finalState = otherStates[otherStates.length - 1];
+    const newActiveUserId = finalState.players[finalState.turnIndex].userId;
+    expect(newActiveUserId).not.toBe(activeUserId);
+  });
+
+  test('an invalid action emits game:error and does not change room state', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('room:join', { roomId: 'room5', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room5', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const inactiveUserId = dealtState.players[(dealtState.turnIndex + 1) % 2].userId;
+    const inactiveClient = inactiveUserId === 'alice' ? alice : bob;
+
+    const errorPromise = waitForEvent(inactiveClient, 'game:error');
+    inactiveClient.emit('game:draw'); // not their turn
+    const error = await errorPromise;
+    expect(error.message).toBe('Not your turn');
+  });
 });

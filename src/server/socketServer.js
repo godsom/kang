@@ -5,6 +5,8 @@ const { createRoom, addPlayer, findPlayer } = require('./room');
 const { setPlayerReady, canStart, startRound } = require('./roomLifecycle');
 const { getPlayerView } = require('./playerView');
 const { disconnectPlayer } = require('./roomConnection');
+const { applyDraw, applyDiscard, applyEat } = require('./turnActions');
+const { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound } = require('./roundEnd');
 
 function createSocketServer() {
   const httpServer = createServer();
@@ -19,6 +21,29 @@ function createSocketServer() {
         socket.emit('room:state', getPlayerView(room, player.userId));
       }
     });
+  }
+
+  function broadcastGameResult(room, outcome) {
+    room.players.forEach(player => {
+      const socket = io.sockets.sockets.get(player.socketId);
+      if (socket) {
+        socket.emit('game:result', outcome);
+      }
+    });
+  }
+
+  function endRound(room, result) {
+    const outcome = finishRound(room, result);
+    broadcastGameResult(room, outcome);
+    broadcastRoomState(room);
+  }
+
+  function getRoomForSocket(socket) {
+    const entry = socketIndex.get(socket.id);
+    if (!entry) return null;
+    const room = roomStore.get(entry.roomId);
+    if (!room) return null;
+    return { room, userId: entry.userId };
   }
 
   io.on('connection', (socket) => {
@@ -40,15 +65,67 @@ function createSocketServer() {
     });
 
     socket.on('player:ready', ({ ready }) => {
-      const entry = socketIndex.get(socket.id);
-      if (!entry) return;
-      const room = roomStore.get(entry.roomId);
-      if (!room) return;
-      setPlayerReady(room, entry.userId, ready);
-      if (canStart(room)) {
-        startRound(room);
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      setPlayerReady(ctx.room, ctx.userId, ready);
+      if (canStart(ctx.room)) {
+        startRound(ctx.room);
       }
-      broadcastRoomState(room);
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('game:draw', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      let result;
+      try {
+        result = applyDraw(ctx.room, ctx.userId);
+      } catch (err) {
+        socket.emit('game:error', { message: err.message });
+        return;
+      }
+      if (result.deckExhausted) {
+        endRound(ctx.room, resolveDeckExhaustedWinner(ctx.room.players));
+        return;
+      }
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('game:discard', ({ card }) => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      try {
+        applyDiscard(ctx.room, ctx.userId, card);
+      } catch (err) {
+        socket.emit('game:error', { message: err.message });
+        return;
+      }
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('game:eat', ({ card }) => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      try {
+        applyEat(ctx.room, ctx.userId, card);
+      } catch (err) {
+        socket.emit('game:error', { message: err.message });
+        return;
+      }
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('game:kaeng', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      let result;
+      try {
+        result = applyKaengDeclaration(ctx.room, ctx.userId);
+      } catch (err) {
+        socket.emit('game:error', { message: err.message });
+        return;
+      }
+      endRound(ctx.room, result);
     });
 
     socket.on('disconnect', () => {
