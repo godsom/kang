@@ -2,11 +2,13 @@ const Client = require('socket.io-client');
 const { createSocketServer } = require('../../src/server/socketServer');
 const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
 
+const card = (rank, suit) => ({ rank, suit });
+
 describe('socketServer', () => {
-  let httpServer, io, port, clients;
+  let httpServer, io, roomStore, port, clients;
 
   beforeEach((done) => {
-    ({ httpServer, io } = createSocketServer());
+    ({ httpServer, io, roomStore } = createSocketServer());
     httpServer.listen(() => {
       port = httpServer.address().port;
       done();
@@ -248,5 +250,85 @@ describe('socketServer', () => {
     inactiveClient.emit('game:draw'); // not their turn
     const error = await errorPromise;
     expect(error.message).toBe('Not your turn');
+  });
+
+  test('a kaeng declaration ends the round and both players receive the same game:result', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const aliceResults = collectEvents(alice, 'game:result');
+    const bobResults = collectEvents(bob, 'game:result');
+
+    alice.emit('room:join', { roomId: 'room6', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room6', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+
+    // Stack the active player's hand with a guaranteed instant-kaeng-eligible
+    // hand (all cards under the threshold) so the declaration is deterministic
+    // rather than dependent on the random deal.
+    const room = roomStore.get('room6');
+    const activePlayer = room.players.find(p => p.userId === activeUserId);
+    activePlayer.hand = [card('A', 'spades'), card('2', 'hearts'), card('3', 'clubs'), card('A', 'diamonds'), card('2', 'clubs')];
+
+    activeClient.emit('game:kaeng');
+    await waitUntil(() => aliceResults.length >= 1 && bobResults.length >= 1);
+
+    expect(aliceResults[0]).toEqual({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
+    expect(bobResults[0]).toEqual({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
+
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'waiting');
+    await waitUntil(() => bobStates[bobStates.length - 1].status === 'waiting');
+  });
+
+  test('an invalid kaeng declaration does not end the round', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const aliceResults = collectEvents(alice, 'game:result');
+    const bobResults = collectEvents(bob, 'game:result');
+
+    alice.emit('room:join', { roomId: 'room7', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room7', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+
+    // Stack the active player's hand with a guaranteed-invalid declaration
+    // (mixed high cards, no meld, not all under the instant-kaeng threshold),
+    // matching the invalid-declaration fixture already used in roundEnd.test.js.
+    const room = roomStore.get('room7');
+    const activePlayer = room.players.find(p => p.userId === activeUserId);
+    activePlayer.hand = [card('K', 'spades'), card('Q', 'hearts'), card('J', 'clubs'), card('9', 'diamonds'), card('8', 'spades')];
+
+    const errorPromise = waitForEvent(activeClient, 'game:error');
+    activeClient.emit('game:kaeng');
+    const error = await errorPromise;
+    expect(error.message).toBe('Invalid kaeng declaration');
+
+    expect(aliceResults.length).toBe(0);
+    expect(bobResults.length).toBe(0);
+    expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
   });
 });
