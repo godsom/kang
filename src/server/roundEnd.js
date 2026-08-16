@@ -2,6 +2,7 @@
 const { calcHandScore } = require('../handScore');
 const { checkKaengWin, getPayoutMultiplier } = require('../win');
 const { ROOM_STATUS, findPlayer } = require('./room');
+const { isPlayersTurn } = require('./turnActions');
 
 function resolveDeckExhaustedWinner(players) {
   const scored = players.map(p => ({ userId: p.userId, score: calcHandScore(p.hand) }));
@@ -17,6 +18,9 @@ function applyKaengDeclaration(room, userId) {
   const player = findPlayer(room, userId);
   if (!player) {
     throw new Error('Player not in room');
+  }
+  if (!isPlayersTurn(room, userId)) {
+    throw new Error('Not your turn');
   }
   if (room.awaitingDiscard) {
     throw new Error('Cannot declare kaeng after drawing this turn');

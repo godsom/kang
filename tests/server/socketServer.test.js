@@ -331,4 +331,39 @@ describe('socketServer', () => {
     expect(bobResults.length).toBe(0);
     expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
   });
+
+  test('a kaeng declaration from the inactive player is rejected as not their turn', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const aliceResults = collectEvents(alice, 'game:result');
+    const bobResults = collectEvents(bob, 'game:result');
+
+    alice.emit('room:join', { roomId: 'room8', userId: 'alice' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('room:join', { roomId: 'room8', userId: 'bob' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const inactiveUserId = dealtState.players[(dealtState.turnIndex + 1) % 2].userId;
+    const inactiveClient = inactiveUserId === 'alice' ? alice : bob;
+
+    // No need to stack a hand here: the turn check must reject the
+    // declaration before hand evaluation is ever reached.
+    const errorPromise = waitForEvent(inactiveClient, 'game:error');
+    inactiveClient.emit('game:kaeng'); // not their turn
+    const error = await errorPromise;
+    expect(error.message).toBe('Not your turn');
+
+    expect(aliceResults.length).toBe(0);
+    expect(bobResults.length).toBe(0);
+    expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
+  });
 });

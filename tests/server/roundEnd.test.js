@@ -62,6 +62,13 @@ describe('applyKaengDeclaration', () => {
     room.awaitingDiscard = true;
     expect(() => applyKaengDeclaration(room, 'alice')).toThrow('Cannot declare kaeng after drawing this turn');
   });
+
+  test('throws if it is not the caller\'s turn, even with an otherwise-winning hand', () => {
+    const room = setupRoom();
+    room.turnIndex = 0; // alice's turn, not bob's
+    room.players[1].hand = [c('A', 'spades'), c('2', 'hearts'), c('3', 'clubs'), c('A', 'diamonds'), c('2', 'clubs')];
+    expect(() => applyKaengDeclaration(room, 'bob')).toThrow('Not your turn');
+  });
 });
 
 describe('finishRound', () => {
