@@ -24,9 +24,14 @@ Milestone 2's game server — room management, state sync, and reconnect handlin
 - `src/server/socketServer.js` — Socket.io wiring: `room:join`, `player:ready`, `disconnect` handlers and broadcast.
 - `src/server/index.js` — server entry point.
 
-Gameplay actions themselves — `game:draw`, `game:discard`, `game:eat`, `game:kaeng` — are **explicitly not wired yet**. That's a deliberate scope boundary for Milestone 2 as planned (room lifecycle and connection state only), not a gap; wiring those actions is a separate follow-up plan.
+Milestone 3's gameplay actions — `game:draw`, `game:discard`, `game:eat`, `game:kaeng`, round resolution, and dealer rotation — are also implemented now, in:
 
-Milestones 3+ (client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
+- `src/server/turnActions.js` — turn gating (`isPlayersTurn`), draw/discard/eat logic.
+- `src/server/roundEnd.js` — kaeng declaration handling, deck-exhausted resolution, round finish/dealer rotation.
+
+These are wired into `src/server/socketServer.js`'s `game:draw`, `game:discard`, `game:eat`, and `game:kaeng` handlers. The game is now fully playable end-to-end: join → ready → deal → draw/discard/eat/kaeng → round result → back to waiting.
+
+Milestones 4+ (client UI, wallet/auth service, voice chat, spectator system, leaderboard) are **not built yet** — see "Suggested build order" below. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for all future work.
 
 **Running tests:**
 ```
@@ -34,7 +39,7 @@ npm install
 npm test        # or: npx jest
 npx jest tests/<name>.test.js   # run a single test file, e.g. tests/win.test.js
 ```
-All tests currently pass (93/93 via Jest), covering both the Milestone 1 game engine and the Milestone 2 game server.
+All tests currently pass (121/121 via Jest), covering the Milestone 1 game engine, the Milestone 2 game server, and the Milestone 3 gameplay actions.
 
 ## Intended architecture (per spec)
 
