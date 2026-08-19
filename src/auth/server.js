@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const { createUser, verifyCredentials } = require('./users');
 const { signToken, verifyToken } = require('./tokens');
 const { getBalance, adjustBalance } = require('./wallet');
@@ -16,6 +17,7 @@ function requireAuth(req, res, next) {
 
 function createAuthApp(pool) {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.post('/register', async (req, res) => {
