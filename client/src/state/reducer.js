@@ -7,7 +7,12 @@ const initialState = {
 function roomReducer(state, action) {
   switch (action.type) {
     case 'ROOM_STATE':
-      return { ...state, room: action.room, error: null };
+      return {
+        ...state,
+        room: action.room,
+        error: null,
+        result: action.room && action.room.status === 'in_progress' ? null : state.result,
+      };
     case 'GAME_RESULT':
       return { ...state, result: action.result };
     case 'CLEAR_RESULT':

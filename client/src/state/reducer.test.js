@@ -8,6 +8,23 @@ describe('roomReducer', () => {
     expect(state.error).toBeNull();
   });
 
+  test('ROOM_STATE clears a stale result when the new room is in_progress', () => {
+    const state = roomReducer(
+      { ...initialState, result: { winners: ['alice'], reason: 'kaeng', multiplier: 1 } },
+      { type: 'ROOM_STATE', room: { status: 'in_progress' } }
+    );
+    expect(state.result).toBeNull();
+    expect(state.room).toEqual({ status: 'in_progress' });
+  });
+
+  test('ROOM_STATE preserves an existing result when the new room is not in_progress', () => {
+    const state = roomReducer(
+      { ...initialState, result: { winners: ['alice'], reason: 'kaeng', multiplier: 1 } },
+      { type: 'ROOM_STATE', room: { status: 'waiting' } }
+    );
+    expect(state.result).toEqual({ winners: ['alice'], reason: 'kaeng', multiplier: 1 });
+  });
+
   test('GAME_RESULT sets result', () => {
     const state = roomReducer(initialState, { type: 'GAME_RESULT', result: { winners: ['alice'], reason: 'kaeng', multiplier: 1 } });
     expect(state.result).toEqual({ winners: ['alice'], reason: 'kaeng', multiplier: 1 });
