@@ -7,7 +7,7 @@ function cardLabel(c) {
 }
 
 function Table({ userId }) {
-  const { socket } = useSocket();
+  const { socket, connected } = useSocket();
   const { state } = useRoom();
   const [selectedCard, setSelectedCard] = useState(null);
 
@@ -34,17 +34,22 @@ function Table({ userId }) {
         ))}
       </ul>
 
-      <button onClick={() => socket.emit('game:draw')}>Draw</button>
+      <button disabled={!connected} onClick={() => socket.emit('game:draw')}>Draw</button>
       <button
-        disabled={!selectedCard}
+        disabled={!connected || !selectedCard}
         onClick={() => socket.emit('game:discard', { card: selectedCard })}
       >
         Discard
       </button>
       {room.discardTop && (
-        <button onClick={() => socket.emit('game:eat', { card: room.discardTop })}>Eat</button>
+        <button
+          disabled={!connected || !selectedCard}
+          onClick={() => socket.emit('game:eat', { card: selectedCard })}
+        >
+          Eat
+        </button>
       )}
-      <button onClick={() => socket.emit('game:kaeng')}>Kaeng</button>
+      <button disabled={!connected} onClick={() => socket.emit('game:kaeng')}>Kaeng</button>
 
       {state.error && <p role="alert">{state.error}</p>}
     </div>

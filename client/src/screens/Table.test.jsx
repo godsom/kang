@@ -49,10 +49,16 @@ describe('Table screen', () => {
     expect(globalThis.__mockSocket.emit).toHaveBeenCalledWith('game:discard', { card: card(2, 'clubs') });
   });
 
-  test('Eat emits game:eat with the discard top', () => {
+  test('Eat is disabled until a hand card is selected', () => {
     render(<Table userId="alice" />);
+    expect(screen.getByRole('button', { name: 'Eat' })).toBeDisabled();
+  });
+
+  test('selecting a card then Eat emits game:eat with the selected hand card', () => {
+    render(<Table userId="alice" />);
+    fireEvent.click(screen.getByText('2 of clubs'));
     fireEvent.click(screen.getByRole('button', { name: 'Eat' }));
-    expect(globalThis.__mockSocket.emit).toHaveBeenCalledWith('game:eat', { card: card(5, 'hearts') });
+    expect(globalThis.__mockSocket.emit).toHaveBeenCalledWith('game:eat', { card: card(2, 'clubs') });
   });
 
   test('Kaeng emits game:kaeng', () => {
