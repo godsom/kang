@@ -3,7 +3,7 @@ import { useSocket } from '../socket/SocketProvider.jsx';
 import { useRoom } from '../state/RoomProvider.jsx';
 
 function Lobby({ userId }) {
-  const { socket } = useSocket();
+  const { socket, connected } = useSocket();
   const { state } = useRoom();
   const [roomId, setRoomId] = useState('');
 
@@ -14,7 +14,7 @@ function Lobby({ userId }) {
           Room ID
           <input value={roomId} onChange={(e) => setRoomId(e.target.value)} />
         </label>
-        <button onClick={() => socket.emit('room:join', { roomId })}>Join</button>
+        <button disabled={!connected} onClick={() => socket.emit('room:join', { roomId })}>Join</button>
         {state.error && <p role="alert">{state.error}</p>}
       </div>
     );
@@ -34,7 +34,7 @@ function Lobby({ userId }) {
           </li>
         ))}
       </ul>
-      <button onClick={() => socket.emit('player:ready', { ready: !me?.ready })}>
+      <button disabled={!connected} onClick={() => socket.emit('player:ready', { ready: !me?.ready })}>
         {me?.ready ? 'Unready' : 'Ready'}
       </button>
       {state.error && <p role="alert">{state.error}</p>}
