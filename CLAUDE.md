@@ -46,7 +46,7 @@ Milestone 5's voice-chat token issuance is also implemented now, in `src/voice/`
 
 - `src/voice/tokens.js` — `createVoiceToken`, wraps `livekit-server-sdk` to produce a signed LiveKit JWT scoped to a room/identity with `canPublish`/`canSubscribe` grants.
 
-Wired into `src/server/socketServer.js`'s new `voice:join` handler: verifies the caller's real room membership (via the existing `getRoomForSocket` lookup, same pattern as every other handler) before issuing a token, rejecting with `voice:error` if the caller isn't a member of the requested room. Both players and spectators can obtain a voice token — spectators get a subscribe-only token (no `canPublish`), players get full publish/subscribe. No client exists in this project (no browser/mobile UI has been built in any milestone), so this milestone is scoped to what a server can do — issuing a correctly-scoped credential — not actual WebRTC audio join/publish, which is inherently client-side work.
+Wired into `src/server/socketServer.js`'s new `voice:join` handler: verifies the caller's real room membership (via the existing `getRoomForSocket` lookup, same pattern as every other handler) before issuing a token, rejecting with `voice:error` if the caller isn't a member of the requested room. Both players and spectators can obtain a voice token — spectators get a subscribe-only token (no `canPublish`), players get full publish/subscribe. At the time this milestone was built, no client existed in this project, so it was scoped to what a server can do — issuing a correctly-scoped credential — not actual WebRTC audio join/publish, which is inherently client-side work. (A browser client was added later, per the client section below, but it does not yet call `voice:join` or join a LiveKit room — voice remains server-only in practice.)
 
 Milestone 6's spectator system is also implemented now, in `src/server/spectator.js`:
 
@@ -65,7 +65,15 @@ Milestone 7's leaderboard/stats persistence is also implemented now, extending `
 
 **Important, honest scope note:** `net_profit`/`pot_amount` are always recorded as `0`. No real stake/payout amount is computed anywhere in this codebase — that requires the wallet integration Milestones 3 and 4 both explicitly deferred (the game server has never called the Auth/Wallet service). The leaderboard therefore ranks by win count (`leaderboard:wins`), not profit — spec §5.5's `leaderboard:profit` design would be meaningless when profit is always zero. Wiring a real payout amount into round outcomes, and switching the leaderboard to rank by actual profit, is future work once the game server and Auth service are integrated.
 
-**Project status: all 7 milestones from the spec's §7 build order are implemented, except #3 (basic client UI) and #8 (anti-cheat audit pass).** No browser/mobile client was ever built in this project — every milestone from Milestone 2 onward is server-only, tested via `socket.io-client`/`supertest` integration tests rather than a real UI. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for any future client or audit work.
+A browser client now exists under `client/` (a separate Vite/React/Vitest project, with its own `package.json` and dependencies from the repo root's Node/Jest project). It implements build-order item #3 — login, lobby, table gameplay, and round results:
+
+- `client/src/api/authClient.js` — REST client for the Milestone 4 Auth service (`/register`, `/login`), reading `VITE_AUTH_URL`.
+- `client/src/socket/SocketProvider.jsx` — owns the Socket.io connection to the game server (`VITE_GAME_SERVER_URL`), emits `auth` with the JWT on every `connect` (including reconnects).
+- `client/src/state/RoomProvider.jsx` / `client/src/state/reducer.js` — a React context + reducer that folds `room:state`, `game:result`, `room:error`, `game:error`, and `auth:error` socket events into state; also remembers the last-joined `roomId` and re-emits `room:join` on reconnect (a new socket id after a drop otherwise leaves the server with no room mapping for that socket).
+- `client/src/screens/Login.jsx`, `Lobby.jsx`, `Table.jsx`, `Result.jsx` — the four screens `client/src/App.jsx` routes between based on room/result state; `App.jsx` also persists `{token, userId, username}` to `sessionStorage` so a page refresh mid-session doesn't force a re-login.
+- Run its tests with `cd client && npm test` (Vitest); it has its own dependency install (`cd client && npm install`) separate from the repo root.
+
+**Project status: all 7 milestones from the spec's §7 build order are implemented, plus build-order item #3 (basic client UI). Only #8 (anti-cheat audit pass) remains outstanding.** Milestones 2 through 7 remain server-only and are tested via `socket.io-client`/`supertest` integration tests; the client above is the first and only browser UI in this project, tested via Vitest/`@testing-library/react`. `kaeng-game-spec.md` remains the source of truth for game rules, architecture, data models, and event contracts for any future client or audit work.
 
 **Running tests:**
 ```
@@ -129,7 +137,7 @@ Recommended stack: Node.js + Socket.io (game server), Redis (room state/cache), 
 
 1. ✅ Core game engine (deck, dealing, meld validation, turn logic) — unit test before integrating with networking.
 2. ✅ Game server + Socket.io (room management, state sync, reconnect handling).
-3. ❌ Basic client UI (table, hand, draw/discard/kaeng actions) — **not built**; no browser/mobile client exists in this project.
+3. ✅ Basic client UI (table, hand, draw/discard/kaeng actions) — a Vite/React/Vitest browser client under `client/`, covering login, lobby, table gameplay, and round results.
 4. ✅ Wallet/Auth service as a separate service with transaction-safe PostgreSQL access — built, but not yet integrated with the game server.
 5. ✅ Voice chat (SFU) — token issuance only; no client to actually publish/subscribe audio.
 6. ✅ Spectator system with filtered state.
