@@ -2,6 +2,7 @@ require('dotenv').config();
 const Client = require('socket.io-client');
 const { createSocketServer } = require('../../src/server/socketServer');
 const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
+const { signToken } = require('../../src/auth/tokens');
 
 const card = (rank, suit) => ({ rank, suit });
 
@@ -36,6 +37,40 @@ describe('socketServer', () => {
     return client;
   }
 
+  test('room:join is rejected before auth', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const errorPromise = waitForEvent(alice, 'room:error');
+    alice.emit('room:join', { roomId: 'unauth-room' });
+    const error = await errorPromise;
+    expect(error.message).toBe('Not authenticated');
+  });
+
+  test('a garbage token is rejected with auth:error', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const errorPromise = waitForEvent(alice, 'auth:error');
+    alice.emit('auth', { token: 'not-a-real-token' });
+    const error = await errorPromise;
+    expect(error.message).toBe('Invalid token');
+  });
+
+  test('a valid token authenticates the socket and room:join uses the token subject as userId', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const okPromise = waitForEvent(alice, 'auth:ok');
+    const token = signToken({ id: 'alice-id', username: 'alice' }, process.env.JWT_SECRET);
+    alice.emit('auth', { token });
+    const ok = await okPromise;
+    expect(ok.userId).toBe('alice-id');
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    // even if the client lies about userId in the payload, the server must use the verified one
+    alice.emit('room:join', { roomId: 'auth-room', userId: 'someone-else' });
+    await waitUntil(() => aliceStates.length >= 1);
+    expect(aliceStates[0].players[0].userId).toBe('alice-id');
+  });
+
   test('two players join, ready up, and receive their own dealt hand only', async () => {
     const alice = connectClient();
     const bob = connectClient();
@@ -44,11 +79,15 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room1', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room1' });
     await waitUntil(() => aliceStates.length >= 1);
     expect(aliceStates[0].status).toBe('waiting');
 
-    bob.emit('room:join', { roomId: 'room1', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room1' });
     await waitUntil(() => bobStates.length >= 1 && aliceStates.length >= 2);
 
     alice.emit('player:ready', { ready: true });
@@ -76,7 +115,9 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'brand-new-room', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'brand-new-room' });
     await waitUntil(() => aliceStates.length >= 1);
     expect(aliceStates[0]).toMatchObject({ direction: 'one_way', eatMode: 'chain_eat', status: 'waiting' });
   });
@@ -86,13 +127,17 @@ describe('socketServer', () => {
       const c = connectClient();
       await waitForEvent(c, 'connect');
       const states = collectEvents(c, 'room:state');
-      c.emit('room:join', { roomId: 'full-room', userId: `p${i}` });
+      c.emit('auth', { token: signToken({ id: `p${i}`, username: `p${i}` }, process.env.JWT_SECRET) });
+      await waitForEvent(c, 'auth:ok');
+      c.emit('room:join', { roomId: 'full-room' });
       await waitUntil(() => states.length >= 1); // wait for each join to be confirmed before the next connects
     }
     const sixth = connectClient();
     await waitForEvent(sixth, 'connect');
     const errorPromise = waitForEvent(sixth, 'room:error');
-    sixth.emit('room:join', { roomId: 'full-room', userId: 'p5' });
+    sixth.emit('auth', { token: signToken({ id: 'p5', username: 'p5' }, process.env.JWT_SECRET) });
+    await waitForEvent(sixth, 'auth:ok');
+    sixth.emit('room:join', { roomId: 'full-room' });
     const error = await errorPromise;
     expect(error.message).toBe('Room is full');
   });
@@ -101,26 +146,34 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'dual-role-room', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'dual-role-room' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const aliceSpectate = connectClient();
     await waitForEvent(aliceSpectate, 'connect');
     const spectateErrorPromise = waitForEvent(aliceSpectate, 'room:error');
-    aliceSpectate.emit('room:join', { roomId: 'dual-role-room', userId: 'alice', asSpectator: true });
+    aliceSpectate.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(aliceSpectate, 'auth:ok');
+    aliceSpectate.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
     const spectateError = await spectateErrorPromise;
     expect(spectateError.message).toBe('Already a player in this room');
 
     const bobSpectate = connectClient();
     await waitForEvent(bobSpectate, 'connect');
     const bobStates = collectEvents(bobSpectate, 'room:state');
-    bobSpectate.emit('room:join', { roomId: 'dual-role-room', userId: 'bob', asSpectator: true });
+    bobSpectate.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bobSpectate, 'auth:ok');
+    bobSpectate.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
     await waitUntil(() => bobStates.length >= 1);
 
     const bobJoinAsPlayer = connectClient();
     await waitForEvent(bobJoinAsPlayer, 'connect');
     const playerErrorPromise = waitForEvent(bobJoinAsPlayer, 'room:error');
-    bobJoinAsPlayer.emit('room:join', { roomId: 'dual-role-room', userId: 'bob' });
+    bobJoinAsPlayer.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bobJoinAsPlayer, 'auth:ok');
+    bobJoinAsPlayer.emit('room:join', { roomId: 'dual-role-room' });
     const playerError = await playerErrorPromise;
     expect(playerError.message).toBe('Already a spectator in this room');
   });
@@ -133,9 +186,13 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room2', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room2' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room2', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room2' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -154,7 +211,9 @@ describe('socketServer', () => {
     const aliceReconnect = connectClient();
     await waitForEvent(aliceReconnect, 'connect');
     const aliceReconnectStates = collectEvents(aliceReconnect, 'room:state');
-    aliceReconnect.emit('room:join', { roomId: 'room2', userId: 'alice' });
+    aliceReconnect.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(aliceReconnect, 'auth:ok');
+    aliceReconnect.emit('room:join', { roomId: 'room2' });
     await waitUntil(() => aliceReconnectStates.length >= 1);
 
     const aliceView = aliceReconnectStates[aliceReconnectStates.length - 1].players.find(p => p.userId === 'alice');
@@ -170,9 +229,13 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room4' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room4', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room4' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -185,7 +248,9 @@ describe('socketServer', () => {
     const aliceReconnect = connectClient();
     await waitForEvent(aliceReconnect, 'connect');
     const aliceReconnectStates = collectEvents(aliceReconnect, 'room:state');
-    aliceReconnect.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    aliceReconnect.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(aliceReconnect, 'auth:ok');
+    aliceReconnect.emit('room:join', { roomId: 'room4' });
     await waitUntil(() => aliceReconnectStates.length >= 1);
     expect(aliceReconnectStates[aliceReconnectStates.length - 1].players.find(p => p.userId === 'alice').connected).toBe(true);
 
@@ -210,8 +275,12 @@ describe('socketServer', () => {
 
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room3', userId: 'alice' });
-    bob.emit('room:join', { roomId: 'room3', userId: 'bob' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room3' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room3' });
     await waitUntil(() => bobStates.length >= 1 && bobStates[bobStates.length - 1].players.length === 2);
 
     alice.close();
@@ -227,9 +296,13 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room4', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room4' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room4', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room4' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -269,9 +342,13 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId: 'room5', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room5' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room5', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room5' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -298,9 +375,13 @@ describe('socketServer', () => {
     const aliceResults = collectEvents(alice, 'game:result');
     const bobResults = collectEvents(bob, 'game:result');
 
-    alice.emit('room:join', { roomId: 'room6', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room6' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room6', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room6' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -338,9 +419,13 @@ describe('socketServer', () => {
     const aliceResults = collectEvents(alice, 'game:result');
     const bobResults = collectEvents(bob, 'game:result');
 
-    alice.emit('room:join', { roomId: 'room7', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room7' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room7', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room7' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -378,9 +463,13 @@ describe('socketServer', () => {
     const aliceResults = collectEvents(alice, 'game:result');
     const bobResults = collectEvents(bob, 'game:result');
 
-    alice.emit('room:join', { roomId: 'room8', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'room8' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'room8', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'room8' });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -407,7 +496,9 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'voice-room-1', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'voice-room-1' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const tokenPromise = waitForEvent(alice, 'voice:token');
@@ -423,7 +514,9 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'voice-room-2', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'voice-room-2' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const errorPromise = waitForEvent(alice, 'voice:error');
@@ -436,7 +529,9 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'voice-room-3', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'voice-room-3' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const errorPromise = waitForEvent(alice, 'voice:error');
@@ -449,7 +544,9 @@ describe('socketServer', () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'voice-room-4', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'voice-room-4' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const originalApiKey = process.env.LIVEKIT_API_KEY;
@@ -474,11 +571,17 @@ describe('socketServer', () => {
     const bobStates = collectEvents(bob, 'room:state');
     const specStates = collectEvents(spectator, 'room:state');
 
-    alice.emit('room:join', { roomId: 'spec-room-1', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'spec-room-1' });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId: 'spec-room-1', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'spec-room-1' });
     await waitUntil(() => bobStates.length >= 1);
-    spectator.emit('room:join', { roomId: 'spec-room-1', userId: 'watcher', asSpectator: true });
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'spec-room-1', asSpectator: true });
     await waitUntil(() => specStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });
@@ -498,7 +601,9 @@ describe('socketServer', () => {
       const c = connectClient();
       await waitForEvent(c, 'connect');
       const states = collectEvents(c, 'room:state');
-      c.emit('room:join', { roomId: 'spec-room-2', userId: `p${i}` });
+      c.emit('auth', { token: signToken({ id: `p${i}`, username: `p${i}` }, process.env.JWT_SECRET) });
+      await waitForEvent(c, 'auth:ok');
+      c.emit('room:join', { roomId: 'spec-room-2' });
       await waitUntil(() => states.length >= 1);
       clients.push(c);
     }
@@ -506,7 +611,9 @@ describe('socketServer', () => {
     const spectator = connectClient();
     await waitForEvent(spectator, 'connect');
     const specStates = collectEvents(spectator, 'room:state');
-    spectator.emit('room:join', { roomId: 'spec-room-2', userId: 'watcher', asSpectator: true });
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'spec-room-2', asSpectator: true });
     await waitUntil(() => specStates.length >= 1);
 
     expect(specStates[0].players).toHaveLength(5);
@@ -518,11 +625,15 @@ describe('socketServer', () => {
     await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
 
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'spec-room-3', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'spec-room-3' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const specStates = collectEvents(spectator, 'room:state');
-    spectator.emit('room:join', { roomId: 'spec-room-3', userId: 'watcher', asSpectator: true });
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'spec-room-3', asSpectator: true });
     await waitUntil(() => specStates.length >= 1);
 
     alice.close(); // room is 'waiting', so this removes alice outright (Milestone 2 behavior) — 0 players, 1 spectator
@@ -533,7 +644,9 @@ describe('socketServer', () => {
     const bob = connectClient();
     await waitForEvent(bob, 'connect');
     const bobStates = collectEvents(bob, 'room:state');
-    bob.emit('room:join', { roomId: 'spec-room-3', userId: 'bob' });
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'spec-room-3' });
     await waitUntil(() => specStates.length >= 3); // spectator gets a broadcast when bob joins the (still-alive) room
     await waitUntil(() => bobStates.length >= 1);
     expect(bobStates[0].players.map(p => p.userId)).toEqual(['bob']);
@@ -545,11 +658,15 @@ describe('socketServer', () => {
     await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
 
     const aliceStates = collectEvents(alice, 'room:state');
-    alice.emit('room:join', { roomId: 'spec-voice-1', userId: 'alice' });
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'spec-voice-1' });
     await waitUntil(() => aliceStates.length >= 1);
 
     const specStates = collectEvents(spectator, 'room:state');
-    spectator.emit('room:join', { roomId: 'spec-voice-1', userId: 'watcher', asSpectator: true });
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'spec-voice-1', asSpectator: true });
     await waitUntil(() => specStates.length >= 1);
 
     const tokenPromise = waitForEvent(spectator, 'voice:token');
@@ -579,9 +696,13 @@ describe('socketServer', () => {
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
 
-    alice.emit('room:join', { roomId, userId: statsAliceId });
+    alice.emit('auth', { token: signToken({ id: statsAliceId, username: statsAliceId }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId });
     await waitUntil(() => aliceStates.length >= 1);
-    bob.emit('room:join', { roomId, userId: statsBobId });
+    bob.emit('auth', { token: signToken({ id: statsBobId, username: statsBobId }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId });
     await waitUntil(() => bobStates.length >= 1);
 
     alice.emit('player:ready', { ready: true });

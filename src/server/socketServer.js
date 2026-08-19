@@ -13,12 +13,14 @@ const { createVoiceToken } = require('../voice/tokens');
 const { createPool } = require('../auth/db');
 const { createRedisClient } = require('./redisClient');
 const { recordRoundOutcome, getLeaderboard } = require('./stats');
+const { verifyToken } = require('../auth/tokens');
 
 function createSocketServer() {
   const httpServer = createServer();
   const io = new Server(httpServer, { cors: { origin: '*' } });
   const roomStore = createRoomStore();
   const socketIndex = new Map(); // socket.id -> { roomId, userId }
+  const authenticatedSockets = new Map(); // socket.id -> userId
   const pool = createPool();
   const redisClient = createRedisClient();
   let redisConnectPromise = null;
@@ -88,7 +90,22 @@ function createSocketServer() {
   }
 
   io.on('connection', (socket) => {
-    socket.on('room:join', ({ roomId, userId, asSpectator }) => {
+    socket.on('auth', ({ token }) => {
+      const payload = token ? verifyToken(token) : null;
+      if (!payload) {
+        socket.emit('auth:error', { message: 'Invalid token' });
+        return;
+      }
+      authenticatedSockets.set(socket.id, payload.userId);
+      socket.emit('auth:ok', { userId: payload.userId });
+    });
+
+    socket.on('room:join', ({ roomId, asSpectator }) => {
+      const userId = authenticatedSockets.get(socket.id);
+      if (!userId) {
+        socket.emit('room:error', { message: 'Not authenticated' });
+        return;
+      }
       let room = roomStore.get(roomId);
       if (!room) {
         room = createRoom(roomId);
@@ -224,6 +241,7 @@ function createSocketServer() {
     });
 
     socket.on('disconnect', () => {
+      authenticatedSockets.delete(socket.id);
       const entry = socketIndex.get(socket.id);
       if (!entry) return;
       socketIndex.delete(socket.id);
