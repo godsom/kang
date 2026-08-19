@@ -138,7 +138,8 @@ describe('Table screen', () => {
       error: null,
     };
     render(<Table userId="alice" />);
-    expect(screen.getByText(/K of spades \(แนะนำทิ้ง\)/)).toBeInTheDocument();
+    expect(screen.getByText('K of spades')).toBeInTheDocument();
+    expect(screen.getByText('แนะนำทิ้ง')).toBeInTheDocument();
   });
 
   test('End session emits session:end', () => {
