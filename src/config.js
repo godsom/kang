@@ -1,6 +1,6 @@
 const GAME_CONFIG = {
   MIN_PLAYERS: 2,
-  MAX_PLAYERS: 5,
+  MAX_PLAYERS: 6,
   HAND_SIZE: 5,
   DECK_COUNT: 1,
   INSTANT_KAENG_THRESHOLD: 8,
@@ -11,6 +11,7 @@ const GAME_CONFIG = {
     J: 10, Q: 10, K: 10,
   },
   PAYOUT: { instantKaeng: 1, tong: 2, flushOrStraight: 3 },
+  BAHT_PER_POINT: 5,
 };
 
 const VOICE_CONFIG = {

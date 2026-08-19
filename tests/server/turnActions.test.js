@@ -96,6 +96,26 @@ describe('canEat / applyEat', () => {
     expect(room.lastDiscardWasEat).toBe(true);
   });
 
+  test('eating credits 1 ledger point from the previous discard owner to the eater', () => {
+    const room = setupRoom();
+    room.discardPile = [c('2', 'diamonds')];
+    room.discardOwnerId = 'bob';
+    const result = applyEat(room, 'alice', c('2', 'spades'));
+    expect(result.points).toBe(1);
+    expect(room.ledger.bob.alice).toBe(1);
+    expect(room.discardOwnerId).toBe('alice');
+  });
+
+  test('eating with a matching pair already in hand credits 2 ledger points', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('2', 'spades'), c('2', 'hearts')];
+    room.discardPile = [c('2', 'diamonds')];
+    room.discardOwnerId = 'bob';
+    const result = applyEat(room, 'alice', c('2', 'spades'));
+    expect(result.points).toBe(2);
+    expect(room.ledger.bob.alice).toBe(2);
+  });
+
   test('cannot eat a non-matching rank', () => {
     const room = setupRoom();
     room.discardPile = [c('9', 'diamonds')];

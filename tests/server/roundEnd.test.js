@@ -84,4 +84,10 @@ describe('finishRound', () => {
       expect(p.declaredKaeng).toBe(false);
     });
   });
+
+  test('credits the payout multiplier as ledger points from each loser to the winner', () => {
+    const room = setupRoom();
+    finishRound(room, { winners: ['bob'], reason: 'tong' });
+    expect(room.ledger.alice.bob).toBe(2);
+  });
 });

@@ -11,6 +11,10 @@ function setup() {
   room.discardPile = [{ suit: 'spades', rank: '9' }];
   room.dealerId = 'alice';
   room.turnIndex = 0;
+  room.players[0].username = 'Alice A.';
+  room.awaitingDiscard = true;
+  room.isFirstTurn = false;
+  room.turnDeadline = 1234;
   return room;
 }
 
@@ -70,7 +74,33 @@ describe('getPlayerView', () => {
       dealerId: 'alice',
       turnIndex: 0,
       pot: 0,
+      awaitingDiscard: true,
+      isFirstTurn: false,
+      turnDeadline: 1234,
     });
+  });
+
+  test('exposes each player\'s display username, defaulting to userId', () => {
+    const room = setup();
+    const view = getPlayerView(room, 'alice');
+    expect(view.players.find(p => p.userId === 'alice').username).toBe('Alice A.');
+    expect(view.players.find(p => p.userId === 'bob').username).toBe('bob');
+  });
+
+  test('exposes a spectator roster with username and pendingSit, never a hand', () => {
+    const room = setup();
+    room.spectators = [{ userId: 'carol', username: 'Carol C.', socketId: 's3', pendingSit: true }];
+    const view = getPlayerView(room, 'alice');
+    expect(view.spectators).toEqual([{ userId: 'carol', username: 'Carol C.', pendingSit: true }]);
+  });
+
+  test('exposes a live, username-annotated settlement matrix derived from the ledger', () => {
+    const room = setup();
+    room.ledger = { bob: { alice: 2 } };
+    const view = getPlayerView(room, 'alice');
+    expect(view.settlement).toEqual([
+      { from: 'bob', to: 'alice', points: 2, baht: 10, fromUsername: 'bob', toUsername: 'Alice A.' },
+    ]);
   });
 });
 
@@ -104,7 +134,17 @@ describe('getSpectatorView', () => {
       dealerId: 'alice',
       turnIndex: 0,
       pot: 0,
+      awaitingDiscard: true,
+      isFirstTurn: false,
+      turnDeadline: 1234,
     });
+  });
+
+  test('exposes each player\'s display username, defaulting to userId', () => {
+    const room = setup();
+    const view = getSpectatorView(room);
+    expect(view.players.find(p => p.userId === 'alice').username).toBe('Alice A.');
+    expect(view.players.find(p => p.userId === 'bob').username).toBe('bob');
   });
 
   test('marks isDealer correctly per player', () => {
@@ -112,5 +152,14 @@ describe('getSpectatorView', () => {
     const view = getSpectatorView(room);
     expect(view.players.find(p => p.userId === 'alice').isDealer).toBe(true);
     expect(view.players.find(p => p.userId === 'bob').isDealer).toBe(false);
+  });
+
+  test('exposes the same live settlement matrix as the player view', () => {
+    const room = setup();
+    room.ledger = { bob: { alice: 2 } };
+    const view = getSpectatorView(room);
+    expect(view.settlement).toEqual([
+      { from: 'bob', to: 'alice', points: 2, baht: 10, fromUsername: 'bob', toUsername: 'Alice A.' },
+    ]);
   });
 });

@@ -3,6 +3,7 @@ const { calcHandScore } = require('../handScore');
 const { checkKaengWin, getPayoutMultiplier } = require('../win');
 const { ROOM_STATUS, findPlayer } = require('./room');
 const { isPlayersTurn } = require('./turnActions');
+const { addLedgerPoints } = require('./ledger');
 
 function resolveDeckExhaustedWinner(players) {
   const scored = players.map(p => ({ userId: p.userId, score: calcHandScore(p.hand) }));
@@ -38,8 +39,13 @@ function applyKaengDeclaration(room, userId) {
 
 function finishRound(room, result) {
   const multiplier = getPayoutMultiplier(result.reason);
+  room.players.forEach(loser => {
+    if (result.winners.includes(loser.userId)) return;
+    result.winners.forEach(winnerId => addLedgerPoints(room, loser.userId, winnerId, multiplier));
+  });
   room.status = ROOM_STATUS.WAITING;
   room.dealerId = result.winners[0];
+  room.discardOwnerId = null;
   room.players.forEach(p => {
     p.ready = false;
     p.declaredKaeng = false;

@@ -17,6 +17,7 @@ function RoomProvider({ socket, children }) {
       dispatch({ type: 'ROOM_STATE', room });
     };
     const onGameResult = (result) => dispatch({ type: 'GAME_RESULT', result });
+    const onSessionSettlement = ({ settlements }) => dispatch({ type: 'SESSION_SETTLEMENT', settlements });
     const onRoomError = ({ message }) => dispatch({ type: 'ERROR', message });
     const onGameError = ({ message }) => dispatch({ type: 'ERROR', message });
     const onAuthError = ({ message }) => dispatch({ type: 'ERROR', message });
@@ -32,6 +33,7 @@ function RoomProvider({ socket, children }) {
 
     socket.on('room:state', onRoomState);
     socket.on('game:result', onGameResult);
+    socket.on('session:settlement', onSessionSettlement);
     socket.on('room:error', onRoomError);
     socket.on('game:error', onGameError);
     socket.on('auth:error', onAuthError);
@@ -40,6 +42,7 @@ function RoomProvider({ socket, children }) {
     return () => {
       socket.off('room:state', onRoomState);
       socket.off('game:result', onGameResult);
+      socket.off('session:settlement', onSessionSettlement);
       socket.off('room:error', onRoomError);
       socket.off('game:error', onGameError);
       socket.off('auth:error', onAuthError);

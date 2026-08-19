@@ -6,9 +6,15 @@ describe('addSpectator', () => {
     const room = createRoom('room1');
     const { spectator, reconnected } = addSpectator(room, 'alice', 's1');
     expect(reconnected).toBe(false);
-    expect(spectator).toEqual({ userId: 'alice', socketId: 's1' });
+    expect(spectator).toEqual({ userId: 'alice', socketId: 's1', username: 'alice' });
     expect(room.spectators).toHaveLength(1);
     expect(findSpectator(room, 'alice')).toBe(spectator);
+  });
+
+  test('stores a display username, defaulting to the userId when not given', () => {
+    const room = createRoom('room1');
+    const { spectator } = addSpectator(room, 'bob', 's1', 'Bobby');
+    expect(spectator.username).toBe('Bobby');
   });
 
   test('rejoining with the same userId rebinds the socket instead of duplicating', () => {

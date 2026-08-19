@@ -2,6 +2,7 @@ const { GAME_CONFIG } = require('../config');
 const { drawCard } = require('../deck');
 const { getNextTurn } = require('../turn');
 const { ROOM_STATUS, findPlayer } = require('./room');
+const { addLedgerPoints } = require('./ledger');
 
 function activePlayer(room) {
   return room.players[room.turnIndex];
@@ -59,6 +60,7 @@ function applyDiscard(room, userId, card) {
   const player = findPlayer(room, userId);
   const discarded = removeCardFromHand(player, card);
   room.discardPile.push(discarded);
+  room.discardOwnerId = userId;
   room.awaitingDiscard = false;
   room.lastDiscardWasEat = false;
   room.isFirstTurn = false;
@@ -81,12 +83,20 @@ function applyEat(room, userId, card) {
     throw new Error('Cannot eat this card');
   }
   const player = findPlayer(room, userId);
+  // Eating with a matching pair already in hand (2+ of that rank, including
+  // the card being played) is worth double the ledger points.
+  const rankCount = player.hand.filter(c => c.rank === card.rank).length;
+  const points = rankCount >= 2 ? 2 : 1;
   const eaten = removeCardFromHand(player, card);
   room.discardPile.push(eaten);
+  if (room.discardOwnerId) {
+    addLedgerPoints(room, room.discardOwnerId, userId, points);
+  }
+  room.discardOwnerId = userId;
   room.lastDiscardWasEat = true;
   room.isFirstTurn = false;
   advanceTurn(room);
-  return { eaten };
+  return { eaten, points };
 }
 
 module.exports = { isPlayersTurn, applyDraw, applyDiscard, canEat, applyEat };

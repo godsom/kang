@@ -1,5 +1,6 @@
-const { ROOM_STATUS, createRoom, findPlayer, addPlayer, removePlayer } = require('../../src/server/room');
-const { addSpectator } = require('../../src/server/spectator');
+const { ROOM_STATUS, createRoom, findPlayer, addPlayer, removePlayer, standPlayer, sitPlayer } = require('../../src/server/room');
+const { addSpectator, findSpectator } = require('../../src/server/spectator');
+const { GAME_CONFIG } = require('../../src/config');
 
 describe('createRoom', () => {
   test('creates a room with sensible defaults', () => {
@@ -40,6 +41,14 @@ describe('addPlayer', () => {
     expect(player).toMatchObject({ userId: 'alice', socketId: 'socket-1', hand: [], ready: false, connected: true });
     expect(room.players).toHaveLength(1);
     expect(findPlayer(room, 'alice')).toBe(player);
+  });
+
+  test('stores a display username, defaulting to the userId when not given', () => {
+    const room = createRoom('room1');
+    const { player } = addPlayer(room, 'alice', 'socket-1', 'Alice A.');
+    expect(player.username).toBe('Alice A.');
+    const { player: bob } = addPlayer(room, 'bob', 'socket-2');
+    expect(bob.username).toBe('bob');
   });
 
   test('rejoining with the same userId rebinds the socket instead of duplicating', () => {
@@ -89,5 +98,52 @@ describe('removePlayer', () => {
     expect(room.players).toHaveLength(1);
     expect(findPlayer(room, 'alice')).toBeNull();
     expect(findPlayer(room, 'bob')).not.toBeNull();
+  });
+});
+
+describe('standPlayer', () => {
+  test('moves a seated player to the spectator rail, preserving identity', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 'socket-1', 'Alice A.');
+    standPlayer(room, 'alice');
+    expect(findPlayer(room, 'alice')).toBeNull();
+    const spectator = findSpectator(room, 'alice');
+    expect(spectator).toMatchObject({ userId: 'alice', socketId: 'socket-1', username: 'Alice A.' });
+  });
+
+  test('throws if the userId is not a seated player', () => {
+    const room = createRoom('room1');
+    expect(() => standPlayer(room, 'ghost')).toThrow('Player not in room');
+  });
+});
+
+describe('sitPlayer', () => {
+  test('moves a spectator into a seat as a fresh player', () => {
+    const room = createRoom('room1');
+    addSpectator(room, 'alice', 'ws1', 'Alice A.');
+    const { player } = sitPlayer(room, 'alice', 'socket-2');
+    expect(findSpectator(room, 'alice')).toBeNull();
+    expect(player).toMatchObject({ userId: 'alice', socketId: 'socket-2', username: 'Alice A.', hand: [], ready: false });
+    expect(findPlayer(room, 'alice')).toBe(player);
+  });
+
+  test('throws if the userId is not a spectator', () => {
+    const room = createRoom('room1');
+    expect(() => sitPlayer(room, 'ghost', 'socket-2')).toThrow('Spectator not in room');
+  });
+
+  test('throws once the room is already at max players', () => {
+    const room = createRoom('room1');
+    for (let i = 0; i < GAME_CONFIG.MAX_PLAYERS; i++) addPlayer(room, `p${i}`, `s${i}`);
+    addSpectator(room, 'alice', 'ws1');
+    expect(() => sitPlayer(room, 'alice', 'socket-2')).toThrow('Room is full');
+  });
+
+  test('sitting works even while the room is in progress, for a caller that gates the timing itself', () => {
+    const room = createRoom('room1');
+    addSpectator(room, 'alice', 'ws1');
+    room.status = ROOM_STATUS.IN_PROGRESS;
+    const { player } = sitPlayer(room, 'alice', 'socket-2');
+    expect(player.userId).toBe('alice');
   });
 });

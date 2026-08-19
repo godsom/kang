@@ -2,6 +2,7 @@ const initialState = {
   room: null,
   result: null,
   error: null,
+  settlement: null,
 };
 
 function roomReducer(state, action) {
@@ -17,6 +18,10 @@ function roomReducer(state, action) {
       return { ...state, result: action.result };
     case 'CLEAR_RESULT':
       return { ...state, result: null };
+    case 'SESSION_SETTLEMENT':
+      return { ...state, settlement: action.settlements };
+    case 'CLEAR_SETTLEMENT':
+      return { ...state, settlement: null };
     case 'ERROR':
       return { ...state, error: action.message };
     case 'CLEAR_ERROR':

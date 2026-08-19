@@ -759,4 +759,184 @@ describe('socketServer', () => {
 
     await server.redisClient.zRem('leaderboard:wins', 'leaderboard-test-player');
   });
+
+  test('session:end settles the ledger built up across a round into a baht matrix, then clears it', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const aliceResults = collectEvents(alice, 'game:result');
+    const bobResults = collectEvents(bob, 'game:result');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'session-room' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'session-room' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+
+    const room = roomStore.get('session-room');
+    const activePlayer = room.players.find(p => p.userId === activeUserId);
+    activePlayer.hand = [card('A', 'spades'), card('2', 'hearts'), card('3', 'clubs'), card('A', 'diamonds'), card('2', 'clubs')];
+
+    activeClient.emit('game:kaeng');
+    await waitUntil(() => aliceResults.length >= 1 && bobResults.length >= 1);
+
+    const aliceSettlement = waitForEvent(alice, 'session:settlement');
+    const bobSettlement = waitForEvent(bob, 'session:settlement');
+    activeClient.emit('session:end');
+    const [alicePayload, bobPayload] = await Promise.all([aliceSettlement, bobSettlement]);
+
+    const otherUserId = activeUserId === 'alice' ? 'bob' : 'alice';
+    expect(alicePayload.settlements).toEqual([
+      { from: otherUserId, to: activeUserId, points: 1, baht: 5, fromUsername: otherUserId, toUsername: activeUserId },
+    ]);
+    expect(bobPayload).toEqual(alicePayload);
+    expect(room.ledger).toEqual({});
+  });
+
+  test('player:stand moves a seated player to the rail between rounds, and player:sit seats them back', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'stand-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    alice.emit('player:stand');
+    await waitUntil(() => aliceStates[aliceStates.length - 1].players.length === 0);
+    expect(aliceStates[aliceStates.length - 1].spectators).toEqual([{ userId: 'alice', username: 'alice', pendingSit: false }]);
+
+    alice.emit('player:sit');
+    await waitUntil(() => aliceStates[aliceStates.length - 1].players.length === 1);
+    expect(aliceStates[aliceStates.length - 1].players[0].userId).toBe('alice');
+    expect(aliceStates[aliceStates.length - 1].spectators).toEqual([]);
+  });
+
+  test('player:stand is rejected while a round is in progress', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'stand-room-2' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'stand-room-2' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const errorPromise = waitForEvent(alice, 'room:error');
+    alice.emit('player:stand');
+    const error = await errorPromise;
+    expect(error.message).toBe('Can only stand between rounds');
+    expect(aliceStates[aliceStates.length - 1].players).toHaveLength(2);
+  });
+
+  test('player:sit mid-round queues the spectator, and they are seated once the round ends', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    const carol = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect'), waitForEvent(carol, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+    const carolStates = collectEvents(carol, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'sit-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'sit-room-1' });
+    await waitUntil(() => bobStates.length >= 1);
+    carol.emit('auth', { token: signToken({ id: 'carol', username: 'carol' }, process.env.JWT_SECRET) });
+    await waitForEvent(carol, 'auth:ok');
+    carol.emit('room:join', { roomId: 'sit-room-1', asSpectator: true });
+    await waitUntil(() => carolStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    carol.emit('player:sit');
+    await waitUntil(() => carolStates[carolStates.length - 1].spectators.some(s => s.pendingSit));
+    // Still a spectator, not yet dealt in, while the round is live.
+    expect(carolStates[carolStates.length - 1].players.find(p => p.userId === 'carol')).toBeUndefined();
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+    const room = roomStore.get('sit-room-1');
+    const activePlayer = room.players.find(p => p.userId === activeUserId);
+    activePlayer.hand = [card('A', 'spades'), card('2', 'hearts'), card('3', 'clubs'), card('A', 'diamonds'), card('2', 'clubs')];
+    activeClient.emit('game:kaeng');
+
+    await waitUntil(() => carolStates[carolStates.length - 1].players.some(p => p.userId === 'carol'));
+    expect(carolStates[carolStates.length - 1].spectators).toEqual([]);
+  });
+
+  test('player:quit removes a spectator immediately, and a player once the room is waiting; empties the room when last to leave', async () => {
+    const alice = connectClient();
+    await waitForEvent(alice, 'connect');
+    const aliceStates = collectEvents(alice, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'quit-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    expect(roomStore.has('quit-room-1')).toBe(true);
+    alice.emit('player:quit');
+    await waitUntil(() => !roomStore.has('quit-room-1'));
+    expect(roomStore.has('quit-room-1')).toBe(false);
+  });
+
+  test('player:quit is rejected for a seated player while a round is in progress', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'quit-room-2' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'quit-room-2' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const errorPromise = waitForEvent(alice, 'room:error');
+    alice.emit('player:quit');
+    const error = await errorPromise;
+    expect(error.message).toBe('Can only quit between rounds');
+    expect(roomStore.get('quit-room-2').players).toHaveLength(2);
+  });
 });

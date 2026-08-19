@@ -1,11 +1,11 @@
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { createRoomStore } = require('./roomStore');
-const { createRoom, addPlayer, findPlayer } = require('./room');
+const { createRoom, addPlayer, findPlayer, removePlayer, standPlayer, sitPlayer, ROOM_STATUS } = require('./room');
 const { setPlayerReady, canStart, startRound } = require('./roomLifecycle');
 const { getPlayerView, getSpectatorView } = require('./playerView');
 const { disconnectPlayer } = require('./roomConnection');
-const { addSpectator, removeSpectator } = require('./spectator');
+const { addSpectator, removeSpectator, findSpectator } = require('./spectator');
 const { applyDraw, applyDiscard, applyEat } = require('./turnActions');
 const { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound } = require('./roundEnd');
 const { VOICE_CONFIG } = require('../config');
@@ -14,13 +14,16 @@ const { createPool } = require('../auth/db');
 const { createRedisClient } = require('./redisClient');
 const { recordRoundOutcome, getLeaderboard } = require('./stats');
 const { verifyToken } = require('../auth/tokens');
+const { pickAutoDiscardCard, createTurnTimerManager } = require('./turnTimer');
+const { computeSettlement, withUsernames } = require('./ledger');
+const { GAME_CONFIG } = require('../config');
 
 function createSocketServer() {
   const httpServer = createServer();
   const io = new Server(httpServer, { cors: { origin: '*' } });
   const roomStore = createRoomStore();
   const socketIndex = new Map(); // socket.id -> { roomId, userId }
-  const authenticatedSockets = new Map(); // socket.id -> userId
+  const authenticatedSockets = new Map(); // socket.id -> { userId, username }
   const pool = createPool();
   const redisClient = createRedisClient();
   let redisConnectPromise = null;
@@ -69,8 +72,43 @@ function createSocketServer() {
     });
   }
 
+  function handleTurnTimeout(roomId) {
+    const room = roomStore.get(roomId);
+    if (!room || room.status !== ROOM_STATUS.IN_PROGRESS) return;
+    const player = room.players[room.turnIndex];
+    if (!player) return;
+    try {
+      if (!room.awaitingDiscard) {
+        const drawResult = applyDraw(room, player.userId);
+        if (drawResult.deckExhausted) {
+          endRound(room, resolveDeckExhaustedWinner(room.players));
+          return;
+        }
+      }
+      const card = pickAutoDiscardCard(player.hand);
+      applyDiscard(room, player.userId, card);
+    } catch (err) {
+      console.error('Turn timeout auto-action failed:', err.message);
+    }
+    broadcastRoomState(room);
+    turnTimers.schedule(room);
+  }
+
+  const turnTimers = createTurnTimerManager({ onTimeout: handleTurnTimeout });
+
+  function promotePendingSitters(room) {
+    room.spectators
+      .filter(s => s.pendingSit)
+      .forEach(s => {
+        sitPlayer(room, s.userId, s.socketId);
+        socketIndex.set(s.socketId, { roomId: room.id, userId: s.userId, isSpectator: false });
+      });
+  }
+
   async function endRound(room, result) {
+    turnTimers.clear(room.id);
     const outcome = finishRound(room, result);
+    promotePendingSitters(room);
     broadcastGameResult(room, outcome);
     broadcastRoomState(room);
     try {
@@ -96,16 +134,17 @@ function createSocketServer() {
         socket.emit('auth:error', { message: 'Invalid token' });
         return;
       }
-      authenticatedSockets.set(socket.id, payload.userId);
+      authenticatedSockets.set(socket.id, { userId: payload.userId, username: payload.username });
       socket.emit('auth:ok', { userId: payload.userId });
     });
 
     socket.on('room:join', ({ roomId, asSpectator }) => {
-      const userId = authenticatedSockets.get(socket.id);
-      if (!userId) {
+      const auth = authenticatedSockets.get(socket.id);
+      if (!auth) {
         socket.emit('room:error', { message: 'Not authenticated' });
         return;
       }
+      const { userId, username } = auth;
       let room = roomStore.get(roomId);
       if (!room) {
         room = createRoom(roomId);
@@ -113,7 +152,7 @@ function createSocketServer() {
       }
       if (asSpectator) {
         try {
-          addSpectator(room, userId, socket.id);
+          addSpectator(room, userId, socket.id, username);
         } catch (err) {
           socket.emit('room:error', { message: err.message });
           return;
@@ -124,7 +163,7 @@ function createSocketServer() {
         return;
       }
       try {
-        addPlayer(room, userId, socket.id);
+        addPlayer(room, userId, socket.id, username);
       } catch (err) {
         socket.emit('room:error', { message: err.message });
         return;
@@ -140,6 +179,7 @@ function createSocketServer() {
       setPlayerReady(ctx.room, ctx.userId, ready);
       if (canStart(ctx.room)) {
         startRound(ctx.room);
+        turnTimers.schedule(ctx.room);
       }
       broadcastRoomState(ctx.room);
     });
@@ -170,6 +210,7 @@ function createSocketServer() {
         socket.emit('game:error', { message: err.message });
         return;
       }
+      turnTimers.schedule(ctx.room);
       broadcastRoomState(ctx.room);
     });
 
@@ -182,6 +223,7 @@ function createSocketServer() {
         socket.emit('game:error', { message: err.message });
         return;
       }
+      turnTimers.schedule(ctx.room);
       broadcastRoomState(ctx.room);
     });
 
@@ -230,6 +272,82 @@ function createSocketServer() {
       });
     });
 
+    socket.on('player:stand', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx || ctx.isSpectator) return;
+      if (ctx.room.status !== ROOM_STATUS.WAITING) {
+        socket.emit('room:error', { message: 'Can only stand between rounds' });
+        return;
+      }
+      try {
+        standPlayer(ctx.room, ctx.userId);
+      } catch (err) {
+        socket.emit('room:error', { message: err.message });
+        return;
+      }
+      socketIndex.set(socket.id, { roomId: ctx.room.id, userId: ctx.userId, isSpectator: true });
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('player:sit', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx || !ctx.isSpectator) return;
+      if (ctx.room.status !== ROOM_STATUS.WAITING) {
+        // Queue to be seated once the current round finishes rather than
+        // joining mid-round with no cards and a corrupted turn order.
+        const spectator = findSpectator(ctx.room, ctx.userId);
+        if (spectator) spectator.pendingSit = true;
+        broadcastRoomState(ctx.room);
+        return;
+      }
+      try {
+        sitPlayer(ctx.room, ctx.userId, socket.id);
+      } catch (err) {
+        socket.emit('room:error', { message: err.message });
+        return;
+      }
+      socketIndex.set(socket.id, { roomId: ctx.room.id, userId: ctx.userId, isSpectator: false });
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('player:quit', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx) return;
+      if (ctx.isSpectator) {
+        removeSpectator(ctx.room, ctx.userId);
+      } else {
+        if (ctx.room.status !== ROOM_STATUS.WAITING) {
+          socket.emit('room:error', { message: 'Can only quit between rounds' });
+          return;
+        }
+        removePlayer(ctx.room, ctx.userId);
+      }
+      socketIndex.delete(socket.id);
+      if (ctx.room.players.length === 0 && ctx.room.spectators.length === 0) {
+        turnTimers.clear(ctx.room.id);
+        roomStore.delete(ctx.room.id);
+        return;
+      }
+      broadcastRoomState(ctx.room);
+    });
+
+    socket.on('session:end', () => {
+      const ctx = getRoomForSocket(socket);
+      if (!ctx || ctx.isSpectator) return;
+      const settlements = withUsernames(ctx.room, computeSettlement(ctx.room, GAME_CONFIG.BAHT_PER_POINT));
+      ctx.room.ledger = {};
+      const payload = { settlements };
+      ctx.room.players.forEach(p => {
+        const playerSocket = io.sockets.sockets.get(p.socketId);
+        if (playerSocket) playerSocket.emit('session:settlement', payload);
+      });
+      ctx.room.spectators.forEach(s => {
+        const spectatorSocket = io.sockets.sockets.get(s.socketId);
+        if (spectatorSocket) spectatorSocket.emit('session:settlement', payload);
+      });
+      broadcastRoomState(ctx.room);
+    });
+
     socket.on('leaderboard:get', async ({ type, limit }) => {
       try {
         await ensureRedisConnected();
@@ -251,6 +369,7 @@ function createSocketServer() {
       if (entry.isSpectator) {
         removeSpectator(room, entry.userId);
         if (room.players.length === 0 && room.spectators.length === 0) {
+          turnTimers.clear(entry.roomId);
           roomStore.delete(entry.roomId);
           return;
         }
@@ -264,6 +383,7 @@ function createSocketServer() {
       if (!player || player.socketId !== socket.id) return;
       const { room: updatedRoom } = disconnectPlayer(room, entry.userId);
       if (updatedRoom.players.length === 0 && updatedRoom.spectators.length === 0) {
+        turnTimers.clear(entry.roomId);
         roomStore.delete(entry.roomId);
         return;
       }

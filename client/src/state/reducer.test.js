@@ -45,6 +45,17 @@ describe('roomReducer', () => {
     expect(state.error).toBeNull();
   });
 
+  test('SESSION_SETTLEMENT sets settlement', () => {
+    const settlements = [{ from: 'a', to: 'b', points: 1, baht: 5 }];
+    const state = roomReducer(initialState, { type: 'SESSION_SETTLEMENT', settlements });
+    expect(state.settlement).toEqual(settlements);
+  });
+
+  test('CLEAR_SETTLEMENT clears settlement', () => {
+    const state = roomReducer({ ...initialState, settlement: [{ from: 'a', to: 'b' }] }, { type: 'CLEAR_SETTLEMENT' });
+    expect(state.settlement).toBeNull();
+  });
+
   test('unknown action returns state unchanged', () => {
     expect(roomReducer(initialState, { type: 'NOPE' })).toBe(initialState);
   });

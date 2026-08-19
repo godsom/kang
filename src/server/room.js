@@ -17,6 +17,8 @@ function createRoom(id, direction = GAME_CONFIG.DIRECTION.ONE_WAY, eatMode = GAM
     pot: 0,
     status: ROOM_STATUS.WAITING,
     isFirstTurn: true,
+    discardOwnerId: null,
+    ledger: {},
   };
 }
 
@@ -24,11 +26,12 @@ function findPlayer(room, userId) {
   return room.players.find(p => p.userId === userId) || null;
 }
 
-function addPlayer(room, userId, socketId) {
+function addPlayer(room, userId, socketId, username = userId) {
   const existing = findPlayer(room, userId);
   if (existing) {
     existing.socketId = socketId;
     existing.connected = true;
+    existing.username = username;
     return { room, player: existing, reconnected: true };
   }
   if (room.status !== ROOM_STATUS.WAITING) {
@@ -46,6 +49,7 @@ function addPlayer(room, userId, socketId) {
   const player = {
     userId,
     socketId,
+    username,
     hand: [],
     ready: false,
     connected: true,
@@ -61,4 +65,43 @@ function removePlayer(room, userId) {
   return room;
 }
 
-module.exports = { ROOM_STATUS, createRoom, findPlayer, addPlayer, removePlayer };
+// Moves a seated player to the rail as a spectator ("stand up" / stop playing
+// without leaving the room). Callers gate this to between-round windows.
+function standPlayer(room, userId) {
+  const player = findPlayer(room, userId);
+  if (!player) {
+    throw new Error('Player not in room');
+  }
+  room.players = room.players.filter(p => p.userId !== userId);
+  room.spectators.push({ userId: player.userId, socketId: player.socketId, username: player.username });
+  return room;
+}
+
+// Moves a spectator into a seat ("sit down" to play). Callers may defer the
+// actual move (via a pendingSit marker) until the current round ends.
+function sitPlayer(room, userId, socketId) {
+  // Lazy require avoids a circular top-level dependency, same as addPlayer above.
+  const { findSpectator } = require('./spectator');
+  const spectator = findSpectator(room, userId);
+  if (!spectator) {
+    throw new Error('Spectator not in room');
+  }
+  if (room.players.length >= GAME_CONFIG.MAX_PLAYERS) {
+    throw new Error('Room is full');
+  }
+  room.spectators = room.spectators.filter(s => s.userId !== userId);
+  const player = {
+    userId,
+    socketId: socketId || spectator.socketId,
+    username: spectator.username || userId,
+    hand: [],
+    ready: false,
+    connected: true,
+    handScore: 0,
+    declaredKaeng: false,
+  };
+  room.players.push(player);
+  return { room, player };
+}
+
+module.exports = { ROOM_STATUS, createRoom, findPlayer, addPlayer, removePlayer, standPlayer, sitPlayer };
