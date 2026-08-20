@@ -99,4 +99,26 @@ describe('Result screen', () => {
     // each winner only collects from the single loser: +5
     expect(screen.getAllByText('+5')).toHaveLength(2);
   });
+
+  test('a kaeng_call_loss with a real lowest-score winner uses the server points map to double their share', () => {
+    globalThis.__mockState = {
+      result: {
+        winners: ['bob', 'carol'],
+        reason: 'kaeng_call_loss',
+        multiplier: 1,
+        points: { alice: -3, bob: 2, carol: 1 },
+      },
+      room: {
+        players: [
+          { userId: 'alice', username: 'Alice A.' },
+          { userId: 'bob', username: 'Bobby' },
+          { userId: 'carol', username: 'Carol C.' },
+        ],
+      },
+    };
+    render(<Result />);
+    expect(screen.getByText('-15')).toBeInTheDocument(); // alice: -3 points * 5 baht
+    expect(screen.getByText('+10')).toBeInTheDocument(); // bob (the real lowest score): +2 * 5, doubled
+    expect(screen.getByText('+5')).toBeInTheDocument(); // carol: +1 * 5, plain rate
+  });
 });

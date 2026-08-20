@@ -61,7 +61,11 @@ function resolveKaengShowdown(players, caller) {
   if (callerScore <= othersMinScore) {
     return { winners: [caller.userId], reason: 'kaeng_call_win' };
   }
-  return { winners: others.map(p => p.userId), reason: 'kaeng_call_loss' };
+  // Everyone who beat the caller "wins" and gets paid, but only whoever
+  // actually has the lowest score is the real winner — they collect double,
+  // the rest of the field collects the normal single rate.
+  const doubledWinners = others.filter(p => calcHandScore(p.hand) === othersMinScore).map(p => p.userId);
+  return { winners: others.map(p => p.userId), reason: 'kaeng_call_loss', doubledWinners };
 }
 
 function checkKaengWin(players, isFirstTurn) {

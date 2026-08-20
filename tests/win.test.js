@@ -33,7 +33,7 @@ describe('checkKaengWin', () => {
       player('p1', [c('A', 's'), c('2', 'h'), c('3', 'd'), c('4', 'c'), c('8', 's')], true), // score 18
       player('p2', [c('A', 'd'), c('A', 'h'), c('2', 's'), c('2', 'c'), c('3', 'h')], false), // score 9, lower
     ];
-    expect(checkKaengWin(players, true)).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+    expect(checkKaengWin(players, true)).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss', doubledWinners: ['p2'] });
   });
 
   test('not instant-kaeng eligible on any turn after the first, even if all cards are < 8 — still falls to the showdown', () => {
@@ -78,7 +78,7 @@ describe('checkKaengWin', () => {
       player('p2', [c('A', 'c'), c('A', 'd')], false), // score 2, beats p1's meld
     ];
     const result = checkKaengWin(players, true);
-    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss', doubledWinners: ['p2'] });
   });
 
   test('a meld is not checked on a later turn — falls straight to the showdown, like instant kaeng', () => {
@@ -87,7 +87,7 @@ describe('checkKaengWin', () => {
       player('p2', [c('A', 'c'), c('A', 'd')], false), // score 2, wins the showdown
     ];
     const result = checkKaengWin(players, false);
-    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss', doubledWinners: ['p2'] });
   });
 
   test('with no instant-kaeng eligibility and no meld, falls back to a score showdown against everyone', () => {
@@ -96,7 +96,7 @@ describe('checkKaengWin', () => {
       player('p2', [c('2', 's'), c('2', 'h'), c('3', 'd'), c('3', 'c'), c('4', 's')], false), // lower score, didn't declare
     ];
     const result = checkKaengWin(players, true);
-    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss', doubledWinners: ['p2'] });
   });
 
   test('the showdown fallback still lets the caller win when their score is the best', () => {
@@ -122,13 +122,22 @@ describe('resolveKaengShowdown', () => {
     expect(resolveKaengShowdown([caller, tied], caller)).toEqual({ winners: ['p1'], reason: 'kaeng_call_win' });
   });
 
-  test('caller loses to a strictly lower score elsewhere — everyone else gets paid, not just the actual best hand', () => {
+  test('caller loses to a strictly lower score elsewhere — everyone else gets paid, but only the actual best hand is doubled', () => {
     const caller = player('p1', [c('9', 's'), c('9', 'h')]); // score 18
     const best = player('p2', [c('A', 's'), c('A', 'h')]); // score 2
     const middling = player('p3', [c('5', 's'), c('5', 'h')]); // score 10, also beats caller
     const result = resolveKaengShowdown([caller, best, middling], caller);
     expect(result.reason).toBe('kaeng_call_loss');
     expect(result.winners.sort()).toEqual(['p2', 'p3']);
+    expect(result.doubledWinners).toEqual(['p2']);
+  });
+
+  test('a tie for the lowest score among others doubles all of them', () => {
+    const caller = player('p1', [c('9', 's'), c('9', 'h')]); // score 18
+    const tiedA = player('p2', [c('A', 's'), c('A', 'h')]); // score 2
+    const tiedB = player('p3', [c('A', 'd'), c('A', 'c')]); // score 2, tied for lowest
+    const result = resolveKaengShowdown([caller, tiedA, tiedB], caller);
+    expect(result.doubledWinners.sort()).toEqual(['p2', 'p3']);
   });
 });
 

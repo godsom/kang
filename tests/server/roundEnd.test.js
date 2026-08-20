@@ -67,7 +67,7 @@ describe('applyKaengDeclaration', () => {
     room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('2', 'diamonds'), c('K', 'spades')]; // score 33, a real tong
     room.players[1].hand = [c('A', 'spades'), c('A', 'hearts')]; // score 2, beats alice despite her meld
     const result = applyKaengDeclaration(room, 'alice');
-    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss' });
+    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss', doubledWinners: ['bob'] });
   });
 
   test('a meld on a later turn still only pays the plain kaeng multiplier, even when it wins the comparison — ตอง/เรียง/สเตรท only ever upgrade the multiplier on the first turn', () => {
@@ -85,7 +85,7 @@ describe('applyKaengDeclaration', () => {
     room.players[0].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('9', 'diamonds'), c('8', 'spades')]; // score 47
     room.players[1].hand = [c('2', 'clubs'), c('2', 'diamonds'), c('3', 'hearts'), c('3', 'spades'), c('4', 'clubs')]; // score 14
     const result = applyKaengDeclaration(room, 'alice');
-    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss' });
+    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss', doubledWinners: ['bob'] });
     expect(room.players[0].declaredKaeng).toBe(false);
   });
 
@@ -117,7 +117,7 @@ describe('finishRound', () => {
     const room = setupRoom();
     room.players.forEach(p => { p.ready = true; p.declaredKaeng = true; });
     const outcome = finishRound(room, { winners: ['bob'], reason: 'tong' });
-    expect(outcome).toEqual({ winners: ['bob'], reason: 'tong', multiplier: 2 });
+    expect(outcome).toEqual({ winners: ['bob'], reason: 'tong', multiplier: 2, points: { alice: -2, bob: 2 } });
     expect(room.status).toBe('waiting');
     expect(room.dealerId).toBe('bob');
     room.players.forEach(p => {
@@ -142,5 +142,16 @@ describe('finishRound', () => {
     finishRound(room, { winners: ['bob', 'carol'], reason: 'kaeng_call_loss' });
     expect(room.ledger.alice.bob).toBe(1);
     expect(room.ledger.alice.carol).toBe(1);
+  });
+
+  test('a lost kaeng call pays the actual lowest score double, everyone else who merely beat the caller single', () => {
+    const room = setupRoom();
+    room.players.push({ userId: 'carol', socketId: 's3', hand: [], ready: false, connected: true, handScore: 0, declaredKaeng: false });
+    // bob has the true lowest score and is doubled; carol only beat the
+    // caller (alice) and gets the plain rate.
+    const outcome = finishRound(room, { winners: ['bob', 'carol'], reason: 'kaeng_call_loss', doubledWinners: ['bob'] });
+    expect(room.ledger.alice.bob).toBe(2);
+    expect(room.ledger.alice.carol).toBe(1);
+    expect(outcome.points).toEqual({ alice: -3, bob: 2, carol: 1 });
   });
 });

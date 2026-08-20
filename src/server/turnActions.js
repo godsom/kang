@@ -132,10 +132,12 @@ function applyEat(room, userId, card) {
   const points = rankCount >= 2 ? 2 : 1;
   const eaten = removeCardFromHand(player, card);
   room.discardPile.push(eaten);
+  // The payer stays whoever discarded this card originally, not whoever ate
+  // it most recently — a chain of eats on the same discard all pay the first
+  // discarder, never an intermediate eater.
   if (room.discardOwnerId) {
     addLedgerPoints(room, room.discardOwnerId, userId, points);
   }
-  room.discardOwnerId = userId;
   room.lastDiscardWasEat = true;
   room.isFirstTurn = false;
   advanceTurn(room);
@@ -178,7 +180,6 @@ function applyMultiEat(room, userId, cards) {
   if (room.discardOwnerId) {
     addLedgerPoints(room, room.discardOwnerId, userId, points);
   }
-  room.discardOwnerId = userId;
   room.lastDiscardWasEat = true;
   room.isFirstTurn = false;
   advanceTurn(room);

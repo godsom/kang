@@ -39,10 +39,24 @@ function applyKaengDeclaration(room, userId) {
 
 function finishRound(room, result) {
   const multiplier = getPayoutMultiplier(result.reason);
+  // A lost kaeng call pays every player who beat the caller, but only the
+  // one(s) with the actual lowest score are the real winner — they collect
+  // double, everyone else who merely beat the caller collects the plain rate.
+  const doubled = new Set(result.doubledWinners || []);
+  const winnerMultiplier = winnerId => (doubled.has(winnerId) ? multiplier * 2 : multiplier);
+
+  const points = {};
+  room.players.forEach(p => { points[p.userId] = 0; });
   room.players.forEach(loser => {
     if (result.winners.includes(loser.userId)) return;
-    result.winners.forEach(winnerId => addLedgerPoints(room, loser.userId, winnerId, multiplier));
+    result.winners.forEach(winnerId => {
+      const m = winnerMultiplier(winnerId);
+      addLedgerPoints(room, loser.userId, winnerId, m);
+      points[winnerId] = (points[winnerId] || 0) + m;
+      points[loser.userId] = (points[loser.userId] || 0) - m;
+    });
   });
+
   room.status = ROOM_STATUS.WAITING;
   room.dealerId = result.winners[0];
   room.discardOwnerId = null;
@@ -50,7 +64,7 @@ function finishRound(room, result) {
     p.ready = false;
     p.declaredKaeng = false;
   });
-  return { ...result, multiplier };
+  return { ...result, multiplier, points };
 }
 
 module.exports = { resolveDeckExhaustedWinner, applyKaengDeclaration, finishRound };

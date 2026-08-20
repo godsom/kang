@@ -156,7 +156,9 @@ describe('canEat / applyEat', () => {
     const result = applyEat(room, 'alice', c('2', 'spades'));
     expect(result.points).toBe(1);
     expect(room.ledger.bob.alice).toBe(1);
-    expect(room.discardOwnerId).toBe('alice');
+    // The payer stays bob (the original discarder), not alice (the eater) —
+    // a further eat down the chain must still pay bob, not alice.
+    expect(room.discardOwnerId).toBe('bob');
   });
 
   test('eating with a matching pair already in hand credits 2 ledger points', () => {
@@ -197,6 +199,20 @@ describe('canEat / applyEat', () => {
     applyEat(room, 'alice', c('2', 'spades')); // bob is now active, lastDiscardWasEat=true
     expect(canEat(room, 'bob', c('2', 'clubs'))).toBe(true);
   });
+
+  test('a second eat down the chain still pays the original discarder, not the intermediate eater', () => {
+    const room = setupRoom({ eatMode: 'chain_eat' });
+    room.players.push({ userId: 'carol', socketId: 's3', hand: [c('2', 'hearts')], ready: false, connected: true, handScore: 0, declaredKaeng: false });
+    room.discardPile = [c('2', 'diamonds')];
+    room.discardOwnerId = 'carol'; // carol discarded the original 2
+    applyEat(room, 'alice', c('2', 'spades')); // alice eats carol's discard, bob is now active
+    expect(room.ledger.carol.alice).toBe(1);
+    expect(room.discardOwnerId).toBe('carol');
+    applyEat(room, 'bob', c('2', 'clubs')); // bob eats the same chain
+    expect(room.ledger.carol.bob).toBe(1);
+    expect(room.ledger.alice).toBeUndefined(); // alice, the intermediate eater, is never charged
+    expect(room.discardOwnerId).toBe('carol');
+  });
 });
 
 describe('applyMultiEat', () => {
@@ -212,7 +228,7 @@ describe('applyMultiEat', () => {
     expect(room.discardPile).toEqual([c('2', 'diamonds'), c('2', 'spades'), c('2', 'hearts')]);
     expect(room.players[0].hand).toEqual([c('9', 'clubs')]);
     expect(room.ledger.bob.alice).toBe(2);
-    expect(room.discardOwnerId).toBe('alice');
+    expect(room.discardOwnerId).toBe('bob');
     expect(room.turnIndex).toBe(1);
   });
 

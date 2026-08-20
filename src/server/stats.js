@@ -56,12 +56,17 @@ async function getLeaderboard(redisClient, type = 'wins', limit = 100) {
 }
 
 async function recordRoundOutcome(pool, redisClient, room, outcome) {
-  const { winners, reason, multiplier } = outcome;
+  const { winners, reason, multiplier, points } = outcome;
   const loserCount = room.players.length - winners.length;
   for (const player of room.players) {
     const isWin = winners.includes(player.userId);
     const handScore = calcHandScore(player.hand);
-    const potAmount = calcPotAmount(isWin, multiplier, winners.length, loserCount);
+    // Prefer the real per-player point delta finishRound computed (it varies
+    // when a lost kaeng call pays the actual lowest score double) — the flat
+    // calcPotAmount formula is only a fallback for callers that don't have it.
+    const potAmount = points && points[player.userId] !== undefined
+      ? points[player.userId] * GAME_CONFIG.BAHT_PER_POINT
+      : calcPotAmount(isWin, multiplier, winners.length, loserCount);
     await recordMatchHistory(pool, {
       roomId: room.id,
       playerId: player.userId,

@@ -1,5 +1,6 @@
 import { useRoom } from '../state/RoomProvider.jsx';
 import Button from '../components/Button.jsx';
+import Card from '../components/Card.jsx';
 
 const REASON_LABELS = {
   instant_kaeng: 'instant kaeng',
@@ -15,23 +16,26 @@ const REASON_LABELS = {
 
 const BAHT_PER_POINT = 5; // mirrors GAME_CONFIG.BAHT_PER_POINT server-side
 
-// Every loser pays every winner `multiplier` points (src/server/roundEnd.js),
-// so each player's net baht change for this round is derivable client-side
-// from just the winners list, the multiplier, and the full player roster.
-function payoutDeltas(players, winners, multiplier) {
+// Prefer the server's real per-player point delta (src/server/roundEnd.js's
+// `points`) — it varies when a lost kaeng call pays the actual lowest score
+// double. The flat "every loser pays every winner `multiplier`" formula below
+// is only a fallback for older cached results that predate `points`.
+function payoutDeltas(players, winners, multiplier, points) {
   const loserCount = players.length - winners.length;
   return players.map((p) => {
     const isWinner = winners.includes(p.userId);
-    const baht = isWinner
-      ? multiplier * BAHT_PER_POINT * loserCount
-      : -(multiplier * BAHT_PER_POINT * winners.length);
-    return { userId: p.userId, username: p.username || p.userId, handScore: p.handScore, baht, isWinner };
+    const baht = points && points[p.userId] !== undefined
+      ? points[p.userId] * BAHT_PER_POINT
+      : (isWinner
+        ? multiplier * BAHT_PER_POINT * loserCount
+        : -(multiplier * BAHT_PER_POINT * winners.length));
+    return { userId: p.userId, username: p.username || p.userId, handScore: p.handScore, hand: p.hand, baht, isWinner };
   });
 }
 
 function Result() {
   const { state, dispatch } = useRoom();
-  const { winners, reason, multiplier, roster } = state.result;
+  const { winners, reason, multiplier, roster, points } = state.result;
   const isBigWin = multiplier >= 2;
   // The server snapshots who was actually in the round (roster) before any
   // post-round promote/demote can move a player to/from spectator — prefer
@@ -45,7 +49,7 @@ function Result() {
     || spectators.find((s) => s.userId === id)?.username
     || id
   );
-  const deltas = payoutDeltas(players, winners, multiplier);
+  const deltas = payoutDeltas(players, winners, multiplier, points);
 
   return (
     <div
@@ -78,6 +82,13 @@ function Result() {
             {deltas.map((d) => (
               <div key={d.userId} className="flex flex-col items-center gap-1">
                 <span className="text-cream-50/80 text-sm">{d.username}</span>
+                {Array.isArray(d.hand) && d.hand.length > 0 && (
+                  <div className="flex gap-0.5" data-testid="result-hand-cards">
+                    {d.hand.map((card, i) => (
+                      <Card key={`${card.rank}-${card.suit}-${i}`} card={card} size="sm" />
+                    ))}
+                  </div>
+                )}
                 {d.handScore !== undefined && (
                   <span className="text-cream-50/50 text-xs" data-testid="result-hand-score">
                     แต้มไพ่เหลือ {d.handScore}

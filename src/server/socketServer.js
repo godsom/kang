@@ -131,6 +131,7 @@ function createSocketServer({ databaseUrl = process.env.DATABASE_URL } = {}) {
       userId: p.userId,
       username: p.username || p.userId,
       handScore: calcHandScore(p.hand),
+      hand: p.hand,
     }));
     promotePendingSitters(room);
     demotePendingStanders(room);
