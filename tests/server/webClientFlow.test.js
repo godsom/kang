@@ -3,12 +3,13 @@ const Client = require('socket.io-client');
 const { createSocketServer } = require('../../src/server/socketServer');
 const { signToken } = require('../../src/auth/tokens');
 const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
+const { testDatabaseUrl } = require('../testDb');
 
 describe('web client flow (server-side contract)', () => {
   let server, httpServer, io, port, clients;
 
   beforeEach((done) => {
-    server = createSocketServer();
+    server = createSocketServer({ databaseUrl: testDatabaseUrl() });
     ({ httpServer, io } = server);
     httpServer.listen(() => {
       port = httpServer.address().port;
@@ -40,6 +41,15 @@ describe('web client flow (server-side contract)', () => {
     });
   }
 
+  // Dealing is no longer automatic once everyone is ready — the room's
+  // dealer must explicitly emit game:deal. The dealer is chosen randomly, so
+  // have every candidate socket emit it; only the real dealer's request is
+  // accepted, the rest get a harmless room:error.
+  async function dealWhenReady(states, sockets) {
+    await waitUntil(() => states.some(s => s.length > 0 && s[s.length - 1].dealerId));
+    sockets.forEach(s => s.emit('game:deal'));
+  }
+
   test('login -> join -> ready -> draw -> discard -> result, matching the client\'s event sequence', async () => {
     const alice = await connectAuthedClient('alice');
     const bob = await connectAuthedClient('bob');
@@ -54,6 +64,7 @@ describe('web client flow (server-side contract)', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const inProgress = aliceStates[aliceStates.length - 1];

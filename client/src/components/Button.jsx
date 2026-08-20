@@ -8,7 +8,7 @@ const VARIANT_CLASSES = {
 function Button({ variant = 'primary', className = '', children, ...props }) {
   return (
     <button
-      className={`rounded-full px-6 py-2.5 font-display font-bold text-base tracking-wide transition-all duration-150 disabled:cursor-not-allowed ${VARIANT_CLASSES[variant]} ${className}`}
+      className={`rounded-full px-5 py-2 font-display font-bold text-base tracking-wide transition-all duration-150 disabled:cursor-not-allowed ${VARIANT_CLASSES[variant]} ${className}`}
       {...props}
     >
       {children}

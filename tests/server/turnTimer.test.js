@@ -63,12 +63,13 @@ describe('createTurnTimerManager', () => {
     const onTimeout = jest.fn();
     const { schedule } = createTurnTimerManager({ onTimeout });
     const room = { id: 'room1', status: ROOM_STATUS.IN_PROGRESS };
+    const half = TURN_DURATION_MS / 2;
     schedule(room);
-    jest.advanceTimersByTime(5000);
+    jest.advanceTimersByTime(half);
     schedule(room);
-    jest.advanceTimersByTime(5000);
+    jest.advanceTimersByTime(half);
     expect(onTimeout).not.toHaveBeenCalled();
-    jest.advanceTimersByTime(5000);
+    jest.advanceTimersByTime(half);
     expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 });

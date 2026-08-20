@@ -74,6 +74,15 @@ describe('startRound', () => {
     expect(room.players[room.turnIndex].userId).toBe(room.dealerId);
   });
 
+  test('stores the first-dealer draws (one card per player) for a reveal animation', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1');
+    addPlayer(room, 'bob', 's2');
+    startRound(room);
+    expect(room.firstDealerDraws).toHaveLength(2);
+    expect(room.firstDealerDraws.map(d => d.userId).sort()).toEqual(['alice', 'bob']);
+  });
+
   test('does not re-determine the dealer on a room that already has one', () => {
     const room = createRoom('room1');
     addPlayer(room, 'alice', 's1');

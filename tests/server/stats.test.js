@@ -1,8 +1,10 @@
 require('dotenv').config();
 const { createPool } = require('../../src/auth/db');
+const { testDatabaseUrl } = require('../testDb');
 const { createRedisClient } = require('../../src/server/redisClient');
 const {
   statsColumnForReason,
+  calcPotAmount,
   recordMatchHistory,
   updatePlayerStats,
   recordWin,
@@ -17,7 +19,7 @@ describe('stats', () => {
   let redisClient;
 
   beforeAll(async () => {
-    pool = createPool();
+    pool = createPool(testDatabaseUrl());
     redisClient = createRedisClient();
     await redisClient.connect();
   });
@@ -44,7 +46,7 @@ describe('stats', () => {
   });
 
   describe('recordMatchHistory', () => {
-    test('inserts a row with pot_amount always 0', async () => {
+    test('defaults pot_amount to 0 when not given', async () => {
       await recordMatchHistory(pool, {
         roomId: 'room1', playerId: 'alice', result: 'win', winType: 'tong', multiplier: 2, handScore: 21,
       });
@@ -54,6 +56,24 @@ describe('stats', () => {
         room_id: 'room1', player_id: 'alice', result: 'win', win_type: 'tong', multiplier: 2, hand_score: 21,
       });
       expect(Number(result.rows[0].pot_amount)).toBe(0);
+    });
+
+    test('persists a real, non-zero pot_amount when given one', async () => {
+      await recordMatchHistory(pool, {
+        roomId: 'room1', playerId: 'alice', result: 'win', winType: 'tong', multiplier: 2, potAmount: 10, handScore: 21,
+      });
+      const result = await pool.query('SELECT pot_amount FROM match_history WHERE player_id = $1', ['alice']);
+      expect(Number(result.rows[0].pot_amount)).toBe(10);
+    });
+  });
+
+  describe('calcPotAmount', () => {
+    test('a winner collects multiplier * 5 baht from each loser', () => {
+      expect(calcPotAmount(true, 2, 1, 2)).toBe(20); // 2 * 5 * 2 losers
+    });
+
+    test('a loser pays multiplier * 5 baht to each winner, as a negative amount', () => {
+      expect(calcPotAmount(false, 2, 1, 2)).toBe(-10); // 2 * 5 * 1 winner
     });
   });
 
@@ -110,10 +130,10 @@ describe('stats', () => {
 
       await recordRoundOutcome(pool, redisClient, room, outcome);
 
-      const history = await pool.query('SELECT player_id, result, win_type FROM match_history ORDER BY player_id');
-      expect(history.rows).toEqual([
-        { player_id: 'alice', result: 'win', win_type: 'tong' },
-        { player_id: 'bob', result: 'lose', win_type: null },
+      const history = await pool.query('SELECT player_id, result, win_type, pot_amount FROM match_history ORDER BY player_id');
+      expect(history.rows.map(r => ({ ...r, pot_amount: Number(r.pot_amount) }))).toEqual([
+        { player_id: 'alice', result: 'win', win_type: 'tong', pot_amount: 10 }, // 2 * 5 * 1 loser
+        { player_id: 'bob', result: 'lose', win_type: null, pot_amount: -10 }, // 2 * 5 * 1 winner
       ]);
 
       const aliceStats = await pool.query('SELECT wins_tong, total_games FROM player_stats WHERE player_id = $1', ['alice']);

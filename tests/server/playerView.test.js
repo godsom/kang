@@ -49,6 +49,14 @@ describe('getPlayerView', () => {
     expect(view.discardTop).toEqual({ suit: 'spades', rank: '9' });
   });
 
+  test('exposes the recent discard pile (last 8 cards) for the visual cascade', () => {
+    const room = setup();
+    room.discardPile = Array.from({ length: 10 }, (_, i) => ({ suit: 'hearts', rank: String((i % 9) + 1) }));
+    const view = getPlayerView(room, 'alice');
+    expect(view.discardPile).toEqual(room.discardPile.slice(-8));
+    expect(view.discardPile).toHaveLength(8);
+  });
+
   test('discardTop is null for an empty discard pile', () => {
     const room = setup();
     room.discardPile = [];
@@ -100,6 +108,36 @@ describe('getPlayerView', () => {
     const view = getPlayerView(room, 'alice');
     expect(view.settlement).toEqual([
       { from: 'bob', to: 'alice', points: 2, baht: 10, fromUsername: 'bob', toUsername: 'Alice A.' },
+    ]);
+  });
+
+  test('exposes each player\'s pendingStand flag', () => {
+    const room = setup();
+    room.players[1].pendingStand = true;
+    const view = getPlayerView(room, 'alice');
+    expect(view.players.find(p => p.userId === 'alice').pendingStand).toBe(false);
+    expect(view.players.find(p => p.userId === 'bob').pendingStand).toBe(true);
+  });
+
+  test('exposes each player\'s fixed seatIndex', () => {
+    const room = setup();
+    const view = getPlayerView(room, 'alice');
+    expect(view.players.find(p => p.userId === 'alice').seatIndex).toBe(0);
+    expect(view.players.find(p => p.userId === 'bob').seatIndex).toBe(1);
+  });
+
+  test('exposes firstDealerDraws with usernames attached, or null before it is set', () => {
+    const room = setup();
+    expect(getPlayerView(room, 'alice').firstDealerDraws).toBeNull();
+
+    room.firstDealerDraws = [
+      { userId: 'alice', card: { rank: 'K', suit: 'spades' } },
+      { userId: 'bob', card: { rank: '2', suit: 'hearts' } },
+    ];
+    const view = getPlayerView(room, 'alice');
+    expect(view.firstDealerDraws).toEqual([
+      { userId: 'alice', card: { rank: 'K', suit: 'spades' }, username: 'Alice A.' },
+      { userId: 'bob', card: { rank: '2', suit: 'hearts' }, username: 'bob' },
     ]);
   });
 });

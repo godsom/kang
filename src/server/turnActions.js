@@ -47,7 +47,7 @@ function applyDraw(room, userId) {
   return { deckExhausted: false, card };
 }
 
-function applyDiscard(room, userId, card) {
+function assertCanDiscard(room, userId) {
   if (room.status !== ROOM_STATUS.IN_PROGRESS) {
     throw new Error('Round is not in progress');
   }
@@ -57,14 +57,57 @@ function applyDiscard(room, userId, card) {
   if (!room.awaitingDiscard) {
     throw new Error('Must draw before discarding');
   }
-  const player = findPlayer(room, userId);
-  const discarded = removeCardFromHand(player, card);
-  room.discardPile.push(discarded);
+}
+
+function finishDiscard(room, userId, discardedCards) {
+  discardedCards.forEach(c => room.discardPile.push(c));
   room.discardOwnerId = userId;
   room.awaitingDiscard = false;
   room.lastDiscardWasEat = false;
   room.isFirstTurn = false;
   advanceTurn(room);
+}
+
+function applyDiscard(room, userId, card) {
+  assertCanDiscard(room, userId);
+  const player = findPlayer(room, userId);
+  const discarded = removeCardFromHand(player, card);
+  finishDiscard(room, userId, [discarded]);
+  return { discarded };
+}
+
+// The hand isn't held at a fixed size — the goal is the lowest score/fewest
+// cards, not a full 5. Discarding an entire matching set (2-4 of the same
+// rank) in one action is how a hand actually shrinks, no replacement draw.
+function applyMultiDiscard(room, userId, cards) {
+  assertCanDiscard(room, userId);
+  if (!Array.isArray(cards) || cards.length < 2) {
+    throw new Error('Multi-discard requires at least 2 cards');
+  }
+  if (!cards.every(c => c.rank === cards[0].rank)) {
+    throw new Error('Multi-discard cards must all share the same rank');
+  }
+
+  const player = findPlayer(room, userId);
+  // Validate every requested card actually exists in hand (as distinct
+  // cards, not the same one claimed twice) before removing any of them, so
+  // an invalid request can never leave the hand partially mutated.
+  const claimedIndices = [];
+  for (const card of cards) {
+    const idx = player.hand.findIndex((c, i) => (
+      c.suit === card.suit && c.rank === card.rank && !claimedIndices.includes(i)
+    ));
+    if (idx === -1) {
+      throw new Error('Card not in hand');
+    }
+    claimedIndices.push(idx);
+  }
+
+  const discarded = [...claimedIndices]
+    .sort((a, b) => b - a)
+    .map(i => player.hand.splice(i, 1)[0])
+    .reverse();
+  finishDiscard(room, userId, discarded);
   return { discarded };
 }
 
@@ -99,4 +142,47 @@ function applyEat(room, userId, card) {
   return { eaten, points };
 }
 
-module.exports = { isPlayersTurn, applyDraw, applyDiscard, canEat, applyEat };
+// Eating with a whole matching set (2-3 cards, same rank as the discard top)
+// in one action plays every one of those cards onto the pile, not just one —
+// and the ledger points scale with how many were actually played (x2 for a
+// pair, x3 for a triple), same shape as applyMultiDiscard's set-claim.
+function applyMultiEat(room, userId, cards) {
+  if (!Array.isArray(cards) || cards.length < 2) {
+    throw new Error('Multi-eat requires at least 2 cards');
+  }
+  if (!cards.every(c => c.rank === cards[0].rank)) {
+    throw new Error('Multi-eat cards must all share the same rank');
+  }
+  if (!canEat(room, userId, cards[0])) {
+    throw new Error('Cannot eat this card');
+  }
+
+  const player = findPlayer(room, userId);
+  const claimedIndices = [];
+  for (const card of cards) {
+    const idx = player.hand.findIndex((c, i) => (
+      c.suit === card.suit && c.rank === card.rank && !claimedIndices.includes(i)
+    ));
+    if (idx === -1) {
+      throw new Error('Card not in hand');
+    }
+    claimedIndices.push(idx);
+  }
+
+  const eaten = [...claimedIndices]
+    .sort((a, b) => b - a)
+    .map(i => player.hand.splice(i, 1)[0])
+    .reverse();
+  eaten.forEach(c => room.discardPile.push(c));
+  const points = eaten.length;
+  if (room.discardOwnerId) {
+    addLedgerPoints(room, room.discardOwnerId, userId, points);
+  }
+  room.discardOwnerId = userId;
+  room.lastDiscardWasEat = true;
+  room.isFirstTurn = false;
+  advanceTurn(room);
+  return { eaten, points };
+}
+
+module.exports = { isPlayersTurn, applyDraw, applyDiscard, applyMultiDiscard, canEat, applyEat, applyMultiEat };

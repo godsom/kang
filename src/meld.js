@@ -14,8 +14,12 @@ function sameSuit(cards) {
   return cards.every(card => card.suit === cards[0].suit);
 }
 
+// A real hand is always 5 cards (HAND_SIZE), so a tong is 3 or 4 matching
+// cards plus 1-2 unrelated kickers — not the whole hand being 3-4 cards.
 function isTong(cards) {
-  return (cards.length === 3 || cards.length === 4) && sameRank(cards);
+  const counts = {};
+  cards.forEach(card => { counts[card.rank] = (counts[card.rank] || 0) + 1; });
+  return Object.values(counts).some(n => n === 3 || n === 4);
 }
 
 function isFlush(cards) {

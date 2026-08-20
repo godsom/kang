@@ -1,12 +1,13 @@
 require('dotenv').config();
 const { createPool } = require('../../src/auth/db');
+const { testDatabaseUrl } = require('../testDb');
 const { createUser, verifyCredentials } = require('../../src/auth/users');
 
 describe('users', () => {
   let pool;
 
   beforeAll(() => {
-    pool = createPool();
+    pool = createPool(testDatabaseUrl());
   });
 
   afterAll(async () => {

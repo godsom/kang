@@ -87,6 +87,23 @@ describe('addPlayer', () => {
     expect(() => addPlayer(room, 'alice', 'socket-1')).toThrow('Already a spectator in this room');
     expect(room.players).toHaveLength(0);
   });
+
+  test('assigns each new player the next lowest free seat index, starting at 0', () => {
+    const room = createRoom('room1');
+    const { player: alice } = addPlayer(room, 'alice', 's1');
+    const { player: bob } = addPlayer(room, 'bob', 's2');
+    expect(alice.seatIndex).toBe(0);
+    expect(bob.seatIndex).toBe(1);
+  });
+
+  test('a reconnect keeps the player\'s existing seat index rather than reassigning one', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1');
+    addPlayer(room, 'bob', 's2');
+    room.status = ROOM_STATUS.IN_PROGRESS;
+    const { player } = addPlayer(room, 'alice', 's1-new');
+    expect(player.seatIndex).toBe(0);
+  });
 });
 
 describe('removePlayer', () => {
@@ -145,5 +162,27 @@ describe('sitPlayer', () => {
     room.status = ROOM_STATUS.IN_PROGRESS;
     const { player } = sitPlayer(room, 'alice', 'socket-2');
     expect(player.userId).toBe('alice');
+  });
+
+  test('a player who sits back down after standing gets the lowest free seat, not necessarily their old one', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1'); // seat 0
+    addPlayer(room, 'bob', 's2'); // seat 1
+    standPlayer(room, 'alice'); // frees seat 0
+    const { player } = sitPlayer(room, 'alice', 's1-new');
+    expect(player.seatIndex).toBe(0);
+  });
+
+  test('sitting fills the lowest free seat left empty by an earlier stand, without disturbing others', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1'); // seat 0
+    addPlayer(room, 'bob', 's2'); // seat 1
+    addPlayer(room, 'carol', 's3'); // seat 2
+    standPlayer(room, 'bob'); // frees seat 1
+    addSpectator(room, 'dan', 'ws1');
+    const { player: dan } = sitPlayer(room, 'dan', 's4');
+    expect(dan.seatIndex).toBe(1);
+    expect(findPlayer(room, 'alice').seatIndex).toBe(0);
+    expect(findPlayer(room, 'carol').seatIndex).toBe(2);
   });
 });

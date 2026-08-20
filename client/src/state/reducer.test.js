@@ -56,6 +56,43 @@ describe('roomReducer', () => {
     expect(state.settlement).toBeNull();
   });
 
+  test('SHOW_PAYOUT sets showPayout to true', () => {
+    const state = roomReducer(initialState, { type: 'SHOW_PAYOUT' });
+    expect(state.showPayout).toBe(true);
+  });
+
+  test('HIDE_PAYOUT sets showPayout to false', () => {
+    const state = roomReducer({ ...initialState, showPayout: true }, { type: 'HIDE_PAYOUT' });
+    expect(state.showPayout).toBe(false);
+  });
+
+  test('SHOW_HOME sets viewHome to true and hides payout', () => {
+    const state = roomReducer({ ...initialState, showPayout: true }, { type: 'SHOW_HOME' });
+    expect(state.viewHome).toBe(true);
+    expect(state.showPayout).toBe(false);
+  });
+
+  test('HIDE_HOME sets viewHome to false', () => {
+    const state = roomReducer({ ...initialState, viewHome: true }, { type: 'HIDE_HOME' });
+    expect(state.viewHome).toBe(false);
+  });
+
+  test('ROOM_STATE preserves viewHome across a same-room refresh', () => {
+    const state = roomReducer(
+      { ...initialState, viewHome: true, room: { roomId: 1, status: 'waiting' } },
+      { type: 'ROOM_STATE', room: { roomId: 1, status: 'waiting', turnIndex: 1 } }
+    );
+    expect(state.viewHome).toBe(true);
+  });
+
+  test('ROOM_STATE clears viewHome when the room actually changes', () => {
+    const state = roomReducer(
+      { ...initialState, viewHome: true, room: { roomId: 1, status: 'waiting' } },
+      { type: 'ROOM_STATE', room: { roomId: 2, status: 'waiting' } }
+    );
+    expect(state.viewHome).toBe(false);
+  });
+
   test('unknown action returns state unchanged', () => {
     expect(roomReducer(initialState, { type: 'NOPE' })).toBe(initialState);
   });

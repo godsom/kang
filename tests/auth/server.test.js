@@ -1,6 +1,7 @@
 require('dotenv').config();
 const request = require('supertest');
 const { createPool } = require('../../src/auth/db');
+const { testDatabaseUrl } = require('../testDb');
 const { createAuthApp } = require('../../src/auth/server');
 
 describe('auth server', () => {
@@ -8,7 +9,7 @@ describe('auth server', () => {
   let app;
 
   beforeAll(() => {
-    pool = createPool();
+    pool = createPool(testDatabaseUrl());
     app = createAuthApp(pool);
   });
 

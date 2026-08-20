@@ -26,12 +26,28 @@ function findPlayer(room, userId) {
   return room.players.find(p => p.userId === userId) || null;
 }
 
+// Picks the lowest unused seat slot (0..MAX_PLAYERS-1) — a fixed clock
+// position around the table (see client/src/seatLayout.js). A seat is only
+// freed when its player actually leaves the seat (stand/quit), never
+// reassigned just because someone else joined or left, so everyone else's
+// visual position stays put when one player's seat empties out.
+function assignSeatIndex(room) {
+  const used = new Set(room.players.map(p => p.seatIndex));
+  for (let i = 0; i < GAME_CONFIG.MAX_PLAYERS; i++) {
+    if (!used.has(i)) return i;
+  }
+  throw new Error('No seat available');
+}
+
 function addPlayer(room, userId, socketId, username = userId) {
   const existing = findPlayer(room, userId);
   if (existing) {
     existing.socketId = socketId;
     existing.connected = true;
     existing.username = username;
+    // A reconnect cancels any pending auto-removal a disconnect had queued —
+    // they're back, so they keep their seat past the current round.
+    existing.pendingStand = false;
     return { room, player: existing, reconnected: true };
   }
   if (room.status !== ROOM_STATUS.WAITING) {
@@ -55,6 +71,8 @@ function addPlayer(room, userId, socketId, username = userId) {
     connected: true,
     handScore: 0,
     declaredKaeng: false,
+    pendingStand: false,
+    seatIndex: assignSeatIndex(room),
   };
   room.players.push(player);
   return { room, player, reconnected: false };
@@ -99,6 +117,8 @@ function sitPlayer(room, userId, socketId) {
     connected: true,
     handScore: 0,
     declaredKaeng: false,
+    pendingStand: false,
+    seatIndex: assignSeatIndex(room),
   };
   room.players.push(player);
   return { room, player };

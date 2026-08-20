@@ -68,4 +68,21 @@ describe('RoomProvider', () => {
     act(() => socket.handlers['connect']());
     expect(socket.emit).toHaveBeenCalledWith('room:join', { roomId: 'room42' });
   });
+
+  test('a null room:state (e.g. after player:quit) forgets the last room, so a later reconnect does not rejoin it', () => {
+    const socket = makeMockSocket();
+    render(
+      <RoomProvider socket={socket}>
+        <Probe />
+      </RoomProvider>
+    );
+
+    act(() => socket.handlers['connect']());
+    act(() => socket.handlers['room:state']({ status: 'waiting', roomId: 'room42' }));
+    act(() => socket.handlers['room:state'](null));
+    expect(screen.getByText('no-room')).toBeInTheDocument();
+
+    act(() => socket.handlers['connect']());
+    expect(socket.emit).not.toHaveBeenCalledWith('room:join', expect.anything());
+  });
 });

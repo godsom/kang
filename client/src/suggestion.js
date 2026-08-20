@@ -74,4 +74,16 @@ function sameCard(a, b) {
   return !!a && !!b && a.rank === b.rank && a.suit === b.suit;
 }
 
-export { MELD_LABEL, detectMeldHint, isInstantKaengEligible, pickSuggestedDiscard, sameCard };
+// Sum of each card's rank value — lower is better (mirrors src/handScore.js).
+function calcHandScore(hand) {
+  if (!hand) return 0;
+  return hand.reduce((sum, c) => sum + RANK_VALUE[c.rank], 0);
+}
+
+// Sorts by rank value so pairs/doubles land next to each other in the hand display.
+function sortHand(hand) {
+  if (!hand) return [];
+  return [...hand].sort((a, b) => RANK_VALUE[a.rank] - RANK_VALUE[b.rank] || a.suit.localeCompare(b.suit));
+}
+
+export { MELD_LABEL, detectMeldHint, isInstantKaengEligible, pickSuggestedDiscard, sameCard, sortHand, calcHandScore };

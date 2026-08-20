@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { SocketProvider, useSocket } from './socket/SocketProvider.jsx';
 import { RoomProvider, useRoom } from './state/RoomProvider.jsx';
+import { AuthContext } from './state/AuthContext.js';
 import Login from './screens/Login.jsx';
-import Lobby from './screens/Lobby.jsx';
+import Home from './screens/Home.jsx';
 import Table from './screens/Table.jsx';
 import Result from './screens/Result.jsx';
+import Payout from './screens/Payout.jsx';
 
 const AUTH_STORAGE_KEY = 'kaeng-auth';
 
@@ -19,9 +21,20 @@ function readStoredAuth() {
 
 function Screens({ userId }) {
   const { state } = useRoom();
+  if (state.showPayout && state.room) return <Payout userId={userId} />;
+  if (state.viewHome) return <Home />;
+  if (state.room) {
+    // The round result is a popup over the table, not a page swap — the
+    // table stays mounted underneath so closing it doesn't lose your seat.
+    return (
+      <>
+        <Table userId={userId} />
+        {state.result && <Result />}
+      </>
+    );
+  }
   if (state.result) return <Result />;
-  if (state.room && state.room.status === 'in_progress') return <Table userId={userId} />;
-  return <Lobby userId={userId} />;
+  return <Home />;
 }
 
 function AuthedApp({ auth }) {
@@ -45,14 +58,25 @@ function App() {
     setAuth(newAuth);
   };
 
+  const handleLogout = () => {
+    try {
+      sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {
+      // sessionStorage unavailable — auth was in-memory only anyway.
+    }
+    setAuth(null);
+  };
+
   if (!auth) {
     return <Login onAuthenticated={handleAuthenticated} />;
   }
 
   return (
-    <SocketProvider auth={auth}>
-      <AuthedApp auth={auth} />
-    </SocketProvider>
+    <AuthContext.Provider value={{ logout: handleLogout }}>
+      <SocketProvider auth={auth}>
+        <AuthedApp auth={auth} />
+      </SocketProvider>
+    </AuthContext.Provider>
   );
 }
 

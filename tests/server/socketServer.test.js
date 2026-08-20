@@ -3,6 +3,7 @@ const Client = require('socket.io-client');
 const { createSocketServer } = require('../../src/server/socketServer');
 const { waitForEvent, collectEvents, waitUntil } = require('./testHelpers');
 const { signToken } = require('../../src/auth/tokens');
+const { testDatabaseUrl } = require('../testDb');
 
 const card = (rank, suit) => ({ rank, suit });
 
@@ -10,7 +11,7 @@ describe('socketServer', () => {
   let server, httpServer, io, roomStore, port, clients;
 
   beforeEach((done) => {
-    server = createSocketServer();
+    server = createSocketServer({ databaseUrl: testDatabaseUrl() });
     ({ httpServer, io, roomStore } = server);
     httpServer.listen(() => {
       port = httpServer.address().port;
@@ -37,6 +38,15 @@ describe('socketServer', () => {
     return client;
   }
 
+  // Dealing is no longer automatic once everyone is ready — the room's
+  // dealer must explicitly emit game:deal. The dealer is chosen randomly, so
+  // have every candidate socket emit it; only the real dealer's request is
+  // accepted, the rest get a harmless room:error.
+  async function dealWhenReady(states, sockets) {
+    await waitUntil(() => states.some(s => s.length > 0 && s[s.length - 1].dealerId));
+    sockets.forEach(s => s.emit('game:deal'));
+  }
+
   test('room:join is rejected before auth', async () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
@@ -53,6 +63,31 @@ describe('socketServer', () => {
     alice.emit('auth', { token: 'not-a-real-token' });
     const error = await errorPromise;
     expect(error.message).toBe('Invalid token');
+  });
+
+  test('a second login for the same account kicks the first socket (single active session per account)', async () => {
+    const tab1 = connectClient();
+    const tab2 = connectClient();
+    await Promise.all([waitForEvent(tab1, 'connect'), waitForEvent(tab2, 'connect')]);
+
+    const token = signToken({ id: 'dupe-user', username: 'dupe' }, process.env.JWT_SECRET);
+    tab1.emit('auth', { token });
+    await waitForEvent(tab1, 'auth:ok');
+
+    const tab1ErrorPromise = waitForEvent(tab1, 'auth:error');
+    const tab1DisconnectPromise = waitForEvent(tab1, 'disconnect');
+    tab2.emit('auth', { token });
+    await waitForEvent(tab2, 'auth:ok');
+
+    const tab1Error = await tab1ErrorPromise;
+    expect(tab1Error.message).toBe('Logged in from another session');
+    await tab1DisconnectPromise;
+    await waitUntil(() => tab1.connected === false);
+
+    // The server-initiated disconnect must not trigger the client's default
+    // auto-reconnect, or the two tabs would just keep kicking each other.
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(tab1.connected).toBe(false);
   });
 
   test('a valid token authenticates the socket and room:join uses the token subject as userId', async () => {
@@ -97,6 +132,7 @@ describe('socketServer', () => {
     });
 
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
     await waitUntil(() => bobStates[bobStates.length - 1].status === 'in_progress');
 
@@ -109,6 +145,101 @@ describe('socketServer', () => {
 
     expect(bobFinal.players.find(p => p.userId === 'bob').hand).toHaveLength(5);
     expect(bobFinal.players.find(p => p.userId === 'alice').hand).toBeUndefined();
+  });
+
+  test('everyone ready does not auto-deal: the room stays waiting with a dealer picked and readyToDeal true, until game:deal is emitted', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'deal-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'deal-room-1' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => {
+      const last = aliceStates[aliceStates.length - 1];
+      return last.readyToDeal === true;
+    });
+
+    // Give the (nonexistent) auto-deal a chance to fire before asserting it didn't.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const settled = aliceStates[aliceStates.length - 1];
+    expect(settled.status).toBe('waiting');
+    expect(settled.readyToDeal).toBe(true);
+    expect(settled.dealerId).not.toBeNull();
+    settled.players.forEach(p => expect(p.handCount).toBe(0));
+  });
+
+  test('game:deal from a non-dealer is rejected, and the room stays waiting', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'deal-room-2' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'deal-room-2' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].dealerId);
+
+    const dealerId = aliceStates[aliceStates.length - 1].dealerId;
+    const nonDealer = dealerId === 'alice' ? bob : alice;
+
+    const errorPromise = waitForEvent(nonDealer, 'room:error');
+    nonDealer.emit('game:deal');
+    const error = await errorPromise;
+    expect(error.message).toBe('Only the dealer can deal');
+    expect(aliceStates[aliceStates.length - 1].status).toBe('waiting');
+  });
+
+  test('game:deal from the dealer deals the hands and starts the round', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'deal-room-3' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'deal-room-3' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].dealerId);
+
+    const dealerId = aliceStates[aliceStates.length - 1].dealerId;
+    const dealer = dealerId === 'alice' ? alice : bob;
+
+    dealer.emit('game:deal');
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+    const dealt = aliceStates[aliceStates.length - 1];
+    expect(dealt.readyToDeal).toBe(false);
+    dealt.players.forEach(p => expect(p.handCount).toBe(5));
   });
 
   test('an unknown room is auto-created on first join with default direction/eatMode', async () => {
@@ -143,6 +274,10 @@ describe('socketServer', () => {
   });
 
   test('a userId cannot join as both a player and a spectator in the same room', async () => {
+    // Both join attempts for a given userId must come from the SAME socket
+    // here — a second socket authenticating as the same userId now kicks the
+    // first (single active session per account), which would make a second,
+    // still-connected socket for 'alice'/'bob' an invalid premise to test.
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
     const aliceStates = collectEvents(alice, 'room:state');
@@ -151,29 +286,21 @@ describe('socketServer', () => {
     alice.emit('room:join', { roomId: 'dual-role-room' });
     await waitUntil(() => aliceStates.length >= 1);
 
-    const aliceSpectate = connectClient();
-    await waitForEvent(aliceSpectate, 'connect');
-    const spectateErrorPromise = waitForEvent(aliceSpectate, 'room:error');
-    aliceSpectate.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
-    await waitForEvent(aliceSpectate, 'auth:ok');
-    aliceSpectate.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
+    const spectateErrorPromise = waitForEvent(alice, 'room:error');
+    alice.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
     const spectateError = await spectateErrorPromise;
     expect(spectateError.message).toBe('Already a player in this room');
 
-    const bobSpectate = connectClient();
-    await waitForEvent(bobSpectate, 'connect');
-    const bobStates = collectEvents(bobSpectate, 'room:state');
-    bobSpectate.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
-    await waitForEvent(bobSpectate, 'auth:ok');
-    bobSpectate.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
+    const bob = connectClient();
+    await waitForEvent(bob, 'connect');
+    const bobStates = collectEvents(bob, 'room:state');
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'dual-role-room', asSpectator: true });
     await waitUntil(() => bobStates.length >= 1);
 
-    const bobJoinAsPlayer = connectClient();
-    await waitForEvent(bobJoinAsPlayer, 'connect');
-    const playerErrorPromise = waitForEvent(bobJoinAsPlayer, 'room:error');
-    bobJoinAsPlayer.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
-    await waitForEvent(bobJoinAsPlayer, 'auth:ok');
-    bobJoinAsPlayer.emit('room:join', { roomId: 'dual-role-room' });
+    const playerErrorPromise = waitForEvent(bob, 'room:error');
+    bob.emit('room:join', { roomId: 'dual-role-room' });
     const playerError = await playerErrorPromise;
     expect(playerError.message).toBe('Already a spectator in this room');
   });
@@ -197,6 +324,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const aliceHandBeforeDisconnect = aliceStates[aliceStates.length - 1].players.find(p => p.userId === 'alice').hand;
@@ -240,6 +368,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     // Simulate the rejoin arriving BEFORE the old socket's disconnect is
@@ -307,6 +436,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
@@ -334,6 +464,48 @@ describe('socketServer', () => {
     expect(newActiveUserId).not.toBe(activeUserId);
   });
 
+  test('game:draw resets the turn deadline instead of leaving the pre-draw timer running — otherwise it can force-discard a card the player never chose', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'draw-deadline-room' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'draw-deadline-room' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    alice.emit('player:ready', { ready: true });
+    bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+    const activeStates = activeUserId === 'alice' ? aliceStates : bobStates;
+    const deadlineBeforeDraw = dealtState.turnDeadline;
+
+    // A real gap before drawing — simulates a player taking a moment to
+    // look at their hand before pressing จั่ว, well within the turn budget.
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    activeClient.emit('game:draw');
+    await waitUntil(() => {
+      const last = activeStates[activeStates.length - 1];
+      return last.players.find(p => p.userId === activeUserId).handCount === 6;
+    });
+
+    const deadlineAfterDraw = activeStates[activeStates.length - 1].turnDeadline;
+    expect(deadlineAfterDraw).toBeGreaterThan(deadlineBeforeDraw);
+  });
+
   test('an invalid action emits game:error and does not change room state', async () => {
     const alice = connectClient();
     const bob = connectClient();
@@ -353,6 +525,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
@@ -386,6 +559,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
@@ -402,14 +576,19 @@ describe('socketServer', () => {
     activeClient.emit('game:kaeng');
     await waitUntil(() => aliceResults.length >= 1 && bobResults.length >= 1);
 
-    expect(aliceResults[0]).toEqual({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
-    expect(bobResults[0]).toEqual({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
+    expect(aliceResults[0]).toMatchObject({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
+    expect(bobResults[0]).toMatchObject({ winners: [activeUserId], reason: 'instant_kaeng', multiplier: 1 });
+
+    // game:result's roster must carry each player's final hand score, so the
+    // client can show everyone's remaining score alongside the win/loss.
+    const winnerRoster = aliceResults[0].roster.find(r => r.userId === activeUserId);
+    expect(winnerRoster.handScore).toBe(9); // A(1) + 2 + 3 + A(1) + 2
 
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'waiting');
     await waitUntil(() => bobStates[bobStates.length - 1].status === 'waiting');
   });
 
-  test('an invalid kaeng declaration does not end the round', async () => {
+  test('a kaeng declaration with no meld and no instant-kaeng eligibility falls back to a score showdown, and still ends the round', async () => {
     const alice = connectClient();
     const bob = connectClient();
     await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
@@ -430,27 +609,30 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
     const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const inactiveUserId = activeUserId === 'alice' ? 'bob' : 'alice';
     const activeClient = activeUserId === 'alice' ? alice : bob;
 
-    // Stack the active player's hand with a guaranteed-invalid declaration
-    // (mixed high cards, no meld, not all under the instant-kaeng threshold),
-    // matching the invalid-declaration fixture already used in roundEnd.test.js.
+    // Stack the active player's hand with no meld and not all under the
+    // instant-kaeng threshold, and the other player's hand with a clearly
+    // worse (higher) score, so the showdown fallback resolves deterministically
+    // in the active player's favor.
     const room = roomStore.get('room7');
-    const activePlayer = room.players.find(p => p.userId === activeUserId);
-    activePlayer.hand = [card('K', 'spades'), card('Q', 'hearts'), card('J', 'clubs'), card('9', 'diamonds'), card('8', 'spades')];
+    room.players.find(p => p.userId === activeUserId).hand =
+      [card('A', 'spades'), card('2', 'hearts'), card('3', 'clubs'), card('4', 'diamonds'), card('9', 'spades')]; // score 19
+    room.players.find(p => p.userId === inactiveUserId).hand =
+      [card('K', 'spades'), card('Q', 'hearts'), card('J', 'clubs'), card('10', 'diamonds'), card('9', 'clubs')]; // score 49
 
-    const errorPromise = waitForEvent(activeClient, 'game:error');
     activeClient.emit('game:kaeng');
-    const error = await errorPromise;
-    expect(error.message).toBe('Invalid kaeng declaration');
+    await waitUntil(() => aliceResults.length >= 1 && bobResults.length >= 1);
 
-    expect(aliceResults.length).toBe(0);
-    expect(bobResults.length).toBe(0);
-    expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
+    expect(aliceResults[0]).toMatchObject({ winners: [activeUserId], reason: 'kaeng_call_win', multiplier: 1 });
+    expect(bobResults[0]).toMatchObject({ winners: [activeUserId], reason: 'kaeng_call_win', multiplier: 1 });
+    await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'waiting');
   });
 
   test('a kaeng declaration from the inactive player is rejected as not their turn', async () => {
@@ -474,6 +656,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
@@ -586,6 +769,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => specStates[specStates.length - 1].status === 'in_progress');
 
     const specView = specStates[specStates.length - 1];
@@ -707,6 +891,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     // Stack the active player's hand with a guaranteed-winning instant-kaeng hand.
@@ -781,6 +966,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const dealtState = aliceStates[aliceStates.length - 1];
@@ -807,6 +993,82 @@ describe('socketServer', () => {
     expect(room.ledger).toEqual({});
   });
 
+  test('session:end also works for a spectator, not just seated players', async () => {
+    const alice = connectClient();
+    const spectator = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const specStates = collectEvents(spectator, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'session-room-spec' });
+    await waitUntil(() => aliceStates.length >= 1);
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'session-room-spec', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    const settlementPromise = waitForEvent(spectator, 'session:settlement');
+    spectator.emit('session:end');
+    const payload = await settlementPromise;
+    expect(payload.settlements).toEqual([]);
+  });
+
+  test('settlement:clear lets only the creditor clear a debt owed to them, not the debtor and not other debts', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const bobStates = collectEvents(bob, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'clear-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+    bob.emit('room:join', { roomId: 'clear-room-1' });
+    await waitUntil(() => bobStates.length >= 1);
+
+    const room = roomStore.get('clear-room-1');
+    room.ledger = { bob: { alice: 3 } }; // bob owes alice 3
+
+    // bob (the debtor) cannot clear his own debt, no matter what `from` he passes.
+    bob.emit('settlement:clear', { from: 'bob' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(room.ledger).toEqual({ bob: { alice: 3 } });
+
+    // alice (the creditor) confirms bob's debt to her was paid.
+    alice.emit('settlement:clear', { from: 'bob' });
+    await waitUntil(() => !room.ledger.bob || room.ledger.bob.alice === undefined);
+
+    expect(room.ledger).toEqual({ bob: {} });
+  });
+
+  test('rooms:list returns a summary of every non-empty room, excluding hands and empty rooms', async () => {
+    const alice = connectClient();
+    const bob = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'list-room-1' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    bob.emit('auth', { token: signToken({ id: 'bob', username: 'bob' }, process.env.JWT_SECRET) });
+    await waitForEvent(bob, 'auth:ok');
+
+    const listPromise = waitForEvent(bob, 'rooms:list');
+    bob.emit('rooms:list');
+    const { rooms } = await listPromise;
+
+    const summary = rooms.find(r => r.roomId === 'list-room-1');
+    expect(summary).toEqual({ roomId: 'list-room-1', status: 'waiting', playerCount: 1, players: ['alice'] });
+    expect(summary.hand).toBeUndefined();
+  });
+
   test('player:stand moves a seated player to the rail between rounds, and player:sit seats them back', async () => {
     const alice = connectClient();
     await waitForEvent(alice, 'connect');
@@ -827,12 +1089,14 @@ describe('socketServer', () => {
     expect(aliceStates[aliceStates.length - 1].spectators).toEqual([]);
   });
 
-  test('player:stand is rejected while a round is in progress', async () => {
+  test('player:stand mid-round is deferred (not rejected): finishes the round seated, then moves to the rail once it ends', async () => {
     const alice = connectClient();
     const bob = connectClient();
     await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(bob, 'connect')]);
     const aliceStates = collectEvents(alice, 'room:state');
     const bobStates = collectEvents(bob, 'room:state');
+    const aliceResults = collectEvents(alice, 'game:result');
+    const bobResults = collectEvents(bob, 'game:result');
 
     alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
     await waitForEvent(alice, 'auth:ok');
@@ -845,13 +1109,36 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
-    const errorPromise = waitForEvent(alice, 'room:error');
     alice.emit('player:stand');
-    const error = await errorPromise;
-    expect(error.message).toBe('Can only stand between rounds');
+    await waitUntil(() => aliceStates[aliceStates.length - 1].players.find(p => p.userId === 'alice')?.pendingStand === true);
+    // Still seated and playing this round — not bumped to the rail yet.
     expect(aliceStates[aliceStates.length - 1].players).toHaveLength(2);
+    expect(aliceStates[aliceStates.length - 1].status).toBe('in_progress');
+
+    const dealtState = aliceStates[aliceStates.length - 1];
+    const activeUserId = dealtState.players[dealtState.turnIndex].userId;
+    const activeClient = activeUserId === 'alice' ? alice : bob;
+    const room = roomStore.get('stand-room-2');
+    room.players.find(p => p.userId === activeUserId).hand =
+      [card('A', 'spades'), card('2', 'hearts'), card('3', 'clubs'), card('A', 'diamonds'), card('2', 'clubs')];
+    activeClient.emit('game:kaeng');
+    await waitUntil(() => aliceResults.length >= 1 && bobResults.length >= 1);
+
+    await waitUntil(() => aliceStates[aliceStates.length - 1].players.length === 1);
+    expect(aliceStates[aliceStates.length - 1].players.find(p => p.userId === 'alice')).toBeUndefined();
+    expect(aliceStates[aliceStates.length - 1].spectators.some(s => s.userId === 'alice')).toBe(true);
+
+    // game:result's roster snapshot must still resolve alice's real username
+    // (and final hand score), even though by the time this event was sent
+    // she'd already been demoted to spectator — the whole point of
+    // snapshotting before promote/demote.
+    expect(aliceResults[0].roster).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: 'alice', username: 'alice', handScore: expect.any(Number) }),
+      expect.objectContaining({ userId: 'bob', username: 'bob', handScore: expect.any(Number) }),
+    ]));
   });
 
   test('player:sit mid-round queues the spectator, and they are seated once the round ends', async () => {
@@ -878,6 +1165,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     carol.emit('player:sit');
@@ -913,6 +1201,32 @@ describe('socketServer', () => {
     expect(roomStore.has('quit-room-1')).toBe(false);
   });
 
+  test('player:quit sends the quitting socket its own room:state(null), even though it is no longer in the broadcast list', async () => {
+    const alice = connectClient();
+    const spectator = connectClient();
+    await Promise.all([waitForEvent(alice, 'connect'), waitForEvent(spectator, 'connect')]);
+    const aliceStates = collectEvents(alice, 'room:state');
+    const specStates = collectEvents(spectator, 'room:state');
+
+    alice.emit('auth', { token: signToken({ id: 'alice', username: 'alice' }, process.env.JWT_SECRET) });
+    await waitForEvent(alice, 'auth:ok');
+    alice.emit('room:join', { roomId: 'quit-room-2' });
+    await waitUntil(() => aliceStates.length >= 1);
+
+    spectator.emit('auth', { token: signToken({ id: 'watcher', username: 'watcher' }, process.env.JWT_SECRET) });
+    await waitForEvent(spectator, 'auth:ok');
+    spectator.emit('room:join', { roomId: 'quit-room-2', asSpectator: true });
+    await waitUntil(() => specStates.length >= 1);
+
+    spectator.emit('player:quit');
+    await waitUntil(() => specStates[specStates.length - 1] === null);
+
+    expect(specStates[specStates.length - 1]).toBeNull();
+    // The room persists for alice, who is unaffected.
+    expect(roomStore.has('quit-room-2')).toBe(true);
+    expect(roomStore.get('quit-room-2').spectators).toHaveLength(0);
+  });
+
   test('player:quit is rejected for a seated player while a round is in progress', async () => {
     const alice = connectClient();
     const bob = connectClient();
@@ -931,6 +1245,7 @@ describe('socketServer', () => {
 
     alice.emit('player:ready', { ready: true });
     bob.emit('player:ready', { ready: true });
+    await dealWhenReady([aliceStates, bobStates], [alice, bob]);
     await waitUntil(() => aliceStates[aliceStates.length - 1].status === 'in_progress');
 
     const errorPromise = waitForEvent(alice, 'room:error');

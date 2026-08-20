@@ -9,6 +9,12 @@ function disconnectPlayer(room, userId) {
     return { room: removePlayer(room, userId), removed: true };
   }
   player.connected = false;
+  // A disconnected player can't act, so their turn (if/when it comes up)
+  // resolves via the existing turn-timeout auto-play — they effectively
+  // "play out" the rest of this round automatically. Queue them to actually
+  // leave the seat once it ends, same as an explicit mid-round พัก, rather
+  // than holding their seat open indefinitely for a reconnect.
+  player.pendingStand = true;
   return { room, removed: false };
 }
 

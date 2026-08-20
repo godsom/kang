@@ -1,7 +1,7 @@
 const { GAME_CONFIG } = require('../config');
 const { ROOM_STATUS } = require('./room');
 
-const TURN_DURATION_MS = 10000;
+const TURN_DURATION_MS = 30000;
 
 // Suggests the card to auto-discard on turn timeout: prefers keeping pairs
 // (they're worth more toward ตอง), so it picks the highest-value card that

@@ -23,6 +23,7 @@
   --animate-jackpot-blink: jackpot-blink 0.9s steps(1, end) infinite;
   --animate-jackpot-pop: jackpot-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   --animate-deal-in: deal-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-float-fade: float-fade 1.6s ease-out both;
 
   @keyframes turn-pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(242, 201, 76, 0.55); }
@@ -40,6 +41,11 @@
   @keyframes deal-in {
     0% { transform: translateY(-24px) scale(0.85); opacity: 0; }
     100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  @keyframes float-fade {
+    0% { transform: translateY(0) scale(0.8); opacity: 0; }
+    20% { transform: translateY(-6px) scale(1.15); opacity: 1; }
+    100% { transform: translateY(-36px) scale(1); opacity: 0; }
   }
 }
 

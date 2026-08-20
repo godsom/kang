@@ -11,9 +11,10 @@ function RoomProvider({ socket, children }) {
   useEffect(() => {
     if (!socket) return;
     const onRoomState = (room) => {
-      if (room && room.roomId) {
-        lastRoomIdRef.current = room.roomId;
-      }
+      // Track the last room so a reconnect can rejoin it — but a null room
+      // (e.g. after an explicit player:quit) means there's nothing to
+      // rejoin, so clear it rather than leaving the previous id behind.
+      lastRoomIdRef.current = room && room.roomId ? room.roomId : null;
       dispatch({ type: 'ROOM_STATE', room });
     };
     const onGameResult = (result) => dispatch({ type: 'GAME_RESULT', result });

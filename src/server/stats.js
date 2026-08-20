@@ -1,3 +1,4 @@
+const { GAME_CONFIG } = require('../config');
 const { calcHandScore } = require('../handScore');
 
 function statsColumnForReason(reason) {
@@ -6,11 +7,19 @@ function statsColumnForReason(reason) {
   return 'wins_instant_kaeng';
 }
 
-async function recordMatchHistory(pool, { roomId, playerId, result, winType, multiplier, handScore }) {
+// Every loser pays every winner `multiplier` points (src/server/roundEnd.js),
+// so a player's net baht for the round is derivable from just their win/loss
+// status, the multiplier, and how many players are on each side.
+function calcPotAmount(isWin, multiplier, winnerCount, loserCount) {
+  const perOpponent = multiplier * GAME_CONFIG.BAHT_PER_POINT;
+  return isWin ? perOpponent * loserCount : -(perOpponent * winnerCount);
+}
+
+async function recordMatchHistory(pool, { roomId, playerId, result, winType, multiplier, potAmount = 0, handScore }) {
   await pool.query(
     `INSERT INTO match_history (room_id, player_id, result, win_type, multiplier, pot_amount, hand_score)
-     VALUES ($1, $2, $3, $4, $5, 0, $6)`,
-    [roomId, playerId, result, winType, multiplier, handScore]
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [roomId, playerId, result, winType, multiplier, potAmount, handScore]
   );
 }
 
@@ -48,15 +57,18 @@ async function getLeaderboard(redisClient, type = 'wins', limit = 100) {
 
 async function recordRoundOutcome(pool, redisClient, room, outcome) {
   const { winners, reason, multiplier } = outcome;
+  const loserCount = room.players.length - winners.length;
   for (const player of room.players) {
     const isWin = winners.includes(player.userId);
     const handScore = calcHandScore(player.hand);
+    const potAmount = calcPotAmount(isWin, multiplier, winners.length, loserCount);
     await recordMatchHistory(pool, {
       roomId: room.id,
       playerId: player.userId,
       result: isWin ? 'win' : 'lose',
       winType: isWin ? reason : null,
       multiplier: isWin ? multiplier : null,
+      potAmount,
       handScore,
     });
     await updatePlayerStats(pool, player.userId, { isWin, winType: reason });
@@ -68,6 +80,7 @@ async function recordRoundOutcome(pool, redisClient, room, outcome) {
 
 module.exports = {
   statsColumnForReason,
+  calcPotAmount,
   recordMatchHistory,
   updatePlayerStats,
   recordWin,

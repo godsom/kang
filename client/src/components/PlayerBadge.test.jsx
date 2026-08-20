@@ -13,4 +13,11 @@ describe('PlayerBadge', () => {
     expect(screen.getByText('bob')).toBeInTheDocument();
     expect(screen.getByText('Dealer')).toBeInTheDocument();
   });
+
+  test('shows a pending-stand tag only when pendingStand is true', () => {
+    const { rerender } = render(<PlayerBadge userId="carol" pendingStand={false} />);
+    expect(screen.queryByText('พักรอบหน้า')).not.toBeInTheDocument();
+    rerender(<PlayerBadge userId="carol" pendingStand={true} />);
+    expect(screen.getByText('พักรอบหน้า')).toBeInTheDocument();
+  });
 });

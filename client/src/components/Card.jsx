@@ -2,9 +2,9 @@ const SUIT_SYMBOLS = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '�
 const RED_SUITS = new Set(['hearts', 'diamonds']);
 
 const SIZE_CLASSES = {
-  sm: 'w-10 h-14 text-[10px] p-1',
-  md: 'w-16 h-24 text-sm p-1.5',
-  lg: 'w-24 h-36 text-2xl p-2',
+  sm: 'w-8 h-11 text-[9px] p-0.5',
+  md: 'w-14 h-20 text-xs p-1',
+  lg: 'w-20 h-28 text-lg p-1.5',
 };
 
 function cardLabel(card) {

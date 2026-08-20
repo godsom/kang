@@ -20,11 +20,21 @@ function canStart(room) {
   );
 }
 
-function startRound(room) {
-  if (!room.dealerId) {
-    const drawDeck = shuffle(buildDeck());
-    room.dealerId = determineFirstDealer(room.players, drawDeck);
-  }
+// Just picks who deals (once per room, never re-drawn on later rounds) — not
+// the actual card deal. Split out so a room can know its dealer, and show
+// that player a "แจกไพ่" button, before any cards are actually dealt.
+function ensureDealer(room) {
+  if (room.dealerId) return room;
+  const drawDeck = shuffle(buildDeck());
+  const { dealerId, draws } = determineFirstDealer(room.players, drawDeck);
+  room.dealerId = dealerId;
+  room.firstDealerDraws = draws; // exposed to clients for a reveal animation
+  return room;
+}
+
+// The actual hand deal — only ever triggered by the dealer's own explicit
+// action (game:deal), never automatically once everyone is ready.
+function dealRound(room) {
   const deck = shuffle(buildDeck());
   dealCards(room.players, deck, GAME_CONFIG.HAND_SIZE);
   room.deck = deck;
@@ -38,4 +48,9 @@ function startRound(room) {
   return room;
 }
 
-module.exports = { setPlayerReady, canStart, startRound };
+function startRound(room) {
+  ensureDealer(room);
+  return dealRound(room);
+}
+
+module.exports = { setPlayerReady, canStart, startRound, ensureDealer, dealRound };

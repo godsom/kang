@@ -14,6 +14,9 @@ function createRoomStore() {
     has(roomId) {
       return rooms.has(roomId);
     },
+    all() {
+      return [...rooms.values()];
+    },
   };
 }
 

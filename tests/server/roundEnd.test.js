@@ -41,20 +41,61 @@ describe('applyKaengDeclaration', () => {
     expect(room.players[0].declaredKaeng).toBe(false);
   });
 
-  test('a valid meld wins on any turn', () => {
+  test('a valid meld wins on the first turn when it also has the lowest score', () => {
     const room = setupRoom();
-    room.isFirstTurn = false;
-    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs')];
+    room.isFirstTurn = true;
+    // A K kicker (value 10) disqualifies instant-kaeng eligibility, so this
+    // must go through the score comparison, not the instant-kaeng check.
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('K', 'diamonds')]; // score 31
+    room.players[1].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('10', 'diamonds'), c('9', 'spades')]; // score 49
     const result = applyKaengDeclaration(room, 'alice');
     expect(result).toEqual({ winners: ['alice'], reason: 'tong' });
   });
 
-  test('throws for an invalid declaration and clears the flag', () => {
+  test('a real dealt 5-card hand with a tong (3 matching + 2 kickers) wins on the first turn when it also has the lowest score', () => {
+    const room = setupRoom();
+    room.isFirstTurn = true;
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('2', 'diamonds'), c('K', 'spades')]; // score 33
+    room.players[1].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('10', 'diamonds'), c('9', 'spades')]; // score 49
+    const result = applyKaengDeclaration(room, 'alice');
+    expect(result).toEqual({ winners: ['alice'], reason: 'tong' });
+  });
+
+  test('a meld does NOT win outright even on the first turn — it still loses if another hand actually scores lower', () => {
+    const room = setupRoom();
+    room.isFirstTurn = true;
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('2', 'diamonds'), c('K', 'spades')]; // score 33, a real tong
+    room.players[1].hand = [c('A', 'spades'), c('A', 'hearts')]; // score 2, beats alice despite her meld
+    const result = applyKaengDeclaration(room, 'alice');
+    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss' });
+  });
+
+  test('a meld on a later turn still only pays the plain kaeng multiplier, even when it wins the comparison — ตอง/เรียง/สเตรท only ever upgrade the multiplier on the first turn', () => {
     const room = setupRoom();
     room.isFirstTurn = false;
-    room.players[0].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('9', 'diamonds'), c('8', 'spades')];
-    expect(() => applyKaengDeclaration(room, 'alice')).toThrow('Invalid kaeng declaration');
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('A', 'diamonds'), c('A', 'spades')]; // score 23, a real tong, and the lowest score
+    room.players[1].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('10', 'diamonds'), c('9', 'spades')]; // score 49
+    const result = applyKaengDeclaration(room, 'alice');
+    expect(result).toEqual({ winners: ['alice'], reason: 'kaeng_call_win' });
+  });
+
+  test('a kaeng declaration with no meld and no instant-kaeng eligibility falls back to a score showdown', () => {
+    const room = setupRoom();
+    room.isFirstTurn = false;
+    room.players[0].hand = [c('K', 'spades'), c('Q', 'hearts'), c('J', 'clubs'), c('9', 'diamonds'), c('8', 'spades')]; // score 47
+    room.players[1].hand = [c('2', 'clubs'), c('2', 'diamonds'), c('3', 'hearts'), c('3', 'spades'), c('4', 'clubs')]; // score 14
+    const result = applyKaengDeclaration(room, 'alice');
+    expect(result).toEqual({ winners: ['bob'], reason: 'kaeng_call_loss' });
     expect(room.players[0].declaredKaeng).toBe(false);
+  });
+
+  test('the showdown fallback still lets the caller win with the better score', () => {
+    const room = setupRoom();
+    room.isFirstTurn = false;
+    room.players[0].hand = [c('A', 'spades'), c('2', 'hearts'), c('3', 'clubs'), c('4', 'diamonds'), c('5', 'spades')]; // score 15
+    room.players[1].hand = [c('K', 'clubs'), c('Q', 'diamonds'), c('J', 'hearts'), c('10', 'spades'), c('9', 'clubs')]; // score 49
+    const result = applyKaengDeclaration(room, 'alice');
+    expect(result).toEqual({ winners: ['alice'], reason: 'kaeng_call_win' });
   });
 
   test('throws if the caller already drew this turn', () => {
@@ -89,5 +130,17 @@ describe('finishRound', () => {
     const room = setupRoom();
     finishRound(room, { winners: ['bob'], reason: 'tong' });
     expect(room.ledger.alice.bob).toBe(2);
+  });
+
+  test('a lost kaeng call credits the multiplier from the caller to every other player', () => {
+    const room = setupRoom();
+    // Add a third player directly, bypassing addPlayer's WAITING-only guard
+    // — setupRoom() already put the room IN_PROGRESS for this describe block.
+    room.players.push({ userId: 'carol', socketId: 's3', hand: [], ready: false, connected: true, handScore: 0, declaredKaeng: false });
+    // winners = everyone except the caller (alice) — this is how a
+    // kaeng_call_loss outcome is shaped by resolveKaengShowdown.
+    finishRound(room, { winners: ['bob', 'carol'], reason: 'kaeng_call_loss' });
+    expect(room.ledger.alice.bob).toBe(1);
+    expect(room.ledger.alice.carol).toBe(1);
   });
 });

@@ -44,4 +44,23 @@ describe('disconnectPlayer', () => {
     expect(room.players[0].connected).toBe(true);
     expect(room.players[0].socketId).toBe('s2');
   });
+
+  test('a mid-round disconnect queues the player to leave once the round ends, like พัก', () => {
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1');
+    room.status = ROOM_STATUS.IN_PROGRESS;
+    disconnectPlayer(room, 'alice');
+    expect(room.players[0].pendingStand).toBe(true);
+  });
+
+  test('reconnecting mid-round cancels the queued auto-leave — they keep their seat', () => {
+    const { addPlayer: reAddPlayer } = require('../../src/server/room');
+    const room = createRoom('room1');
+    addPlayer(room, 'alice', 's1');
+    room.status = ROOM_STATUS.IN_PROGRESS;
+    disconnectPlayer(room, 'alice');
+    expect(room.players[0].pendingStand).toBe(true);
+    reAddPlayer(room, 'alice', 's2');
+    expect(room.players[0].pendingStand).toBe(false);
+  });
 });

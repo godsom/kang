@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { createPool } = require('../../src/auth/db');
+const { testDatabaseUrl } = require('../testDb');
 const { createUser } = require('../../src/auth/users');
 const { getBalance, adjustBalance } = require('../../src/auth/wallet');
 
@@ -7,7 +8,7 @@ describe('wallet', () => {
   let pool;
 
   beforeAll(() => {
-    pool = createPool();
+    pool = createPool(testDatabaseUrl());
   });
 
   afterAll(async () => {

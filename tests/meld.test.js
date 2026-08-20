@@ -12,9 +12,20 @@ describe('isTong', () => {
     expect(isTong([c('7', 's'), c('7', 'h'), c('7', 'd'), c('7', 'c')])).toBe(true);
   });
 
-  test('false for 2 or 5 cards, or mismatched ranks', () => {
+  test('false for a lone pair, or no matching cards at all', () => {
     expect(isTong([c('7', 's'), c('7', 'h')])).toBe(false);
     expect(isTong([c('7', 's'), c('7', 'h'), c('8', 'd')])).toBe(false);
+  });
+
+  test('true for a full 5-card hand containing 3 (or 4) matching cards plus kickers', () => {
+    // A real hand is always dealt at 5 cards — a tong here is 3-4 matching
+    // cards plus 1-2 unrelated kickers, not the whole hand being 3-4 cards.
+    expect(isTong([c('7', 's'), c('7', 'h'), c('7', 'd'), c('2', 'c'), c('9', 's')])).toBe(true);
+    expect(isTong([c('7', 's'), c('7', 'h'), c('7', 'd'), c('7', 'c'), c('9', 's')])).toBe(true);
+  });
+
+  test('false for a 5-card hand with only a pair, no triple', () => {
+    expect(isTong([c('7', 's'), c('7', 'h'), c('2', 'd'), c('3', 'c'), c('9', 's')])).toBe(false);
   });
 });
 

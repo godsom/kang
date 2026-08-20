@@ -22,6 +22,17 @@ describe('createRoomStore', () => {
     expect(store.get('room1')).toBeNull();
   });
 
+  test('all lists every stored room', () => {
+    const store = createRoomStore();
+    store.set('room1', { id: 'room1' });
+    store.set('room2', { id: 'room2' });
+    expect(store.all().map(r => r.id).sort()).toEqual(['room1', 'room2']);
+  });
+
+  test('all is empty for a fresh store', () => {
+    expect(createRoomStore().all()).toEqual([]);
+  });
+
   test('two stores are independent', () => {
     const storeA = createRoomStore();
     const storeB = createRoomStore();

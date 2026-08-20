@@ -1,4 +1,4 @@
-function PlayerBadge({ userId, active = false, ready, isDealer, connected = true, className = '' }) {
+function PlayerBadge({ userId, active = false, ready, isDealer, pendingStand = false, connected = true, className = '' }) {
   return (
     <div
       className={`flex items-center gap-2 rounded-full px-4 py-2 bg-felt-900/70 backdrop-blur-sm border transition-shadow ${
@@ -9,6 +9,7 @@ function PlayerBadge({ userId, active = false, ready, isDealer, connected = true
       {isDealer && <span className="text-gold-400 text-xs uppercase tracking-wide">Dealer</span>}
       {ready === true && <span className="text-felt-600 text-xs">●</span>}
       {ready === false && <span className="text-white/30 text-xs">○</span>}
+      {pendingStand && <span className="text-red-400 text-xs uppercase tracking-wide">พักรอบหน้า</span>}
     </div>
   );
 }

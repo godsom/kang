@@ -1,5 +1,5 @@
 const { createRoom, addPlayer, ROOM_STATUS } = require('../../src/server/room');
-const { isPlayersTurn, applyDraw, applyDiscard, canEat, applyEat } = require('../../src/server/turnActions');
+const { isPlayersTurn, applyDraw, applyDiscard, applyMultiDiscard, canEat, applyEat, applyMultiEat } = require('../../src/server/turnActions');
 
 const c = (rank, suit) => ({ rank, suit });
 
@@ -83,6 +83,59 @@ describe('applyDiscard', () => {
   });
 });
 
+describe('applyMultiDiscard', () => {
+  test('discards a whole matching set at once, shrinking the hand with no replacement draw', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs'), c('2', 'diamonds')];
+    applyDraw(room, 'alice');
+    const pair = [c('7', 'spades'), c('7', 'hearts'), c('7', 'clubs')];
+    const result = applyMultiDiscard(room, 'alice', pair);
+    expect(result.discarded).toEqual(pair);
+    expect(room.discardPile).toEqual(pair);
+    // started with 4 + 1 drawn = 5, minus 3 discarded, no replacement draw
+    expect(room.players[0].hand).toHaveLength(2);
+    expect(room.awaitingDiscard).toBe(false);
+    expect(room.turnIndex).toBe(1);
+  });
+
+  test('throws if fewer than 2 cards are given', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts')];
+    applyDraw(room, 'alice');
+    expect(() => applyMultiDiscard(room, 'alice', [c('7', 'spades')])).toThrow('Multi-discard requires at least 2 cards');
+  });
+
+  test('throws if the cards do not all share the same rank', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('8', 'hearts')];
+    applyDraw(room, 'alice');
+    expect(() => applyMultiDiscard(room, 'alice', [c('7', 'spades'), c('8', 'hearts')]))
+      .toThrow('Multi-discard cards must all share the same rank');
+  });
+
+  test('throws (and leaves the hand untouched) if one of the claimed cards is not actually in hand', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts')];
+    applyDraw(room, 'alice');
+    const handBefore = [...room.players[0].hand];
+    expect(() => applyMultiDiscard(room, 'alice', [c('7', 'spades'), c('7', 'clubs')])).toThrow('Card not in hand');
+    expect(room.players[0].hand).toEqual(handBefore);
+  });
+
+  test('throws if you try to claim the same physical card twice', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts')];
+    applyDraw(room, 'alice');
+    expect(() => applyMultiDiscard(room, 'alice', [c('7', 'spades'), c('7', 'spades')])).toThrow('Card not in hand');
+  });
+
+  test('throws if discarding before drawing', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('7', 'spades'), c('7', 'hearts')];
+    expect(() => applyMultiDiscard(room, 'alice', [c('7', 'spades'), c('7', 'hearts')])).toThrow('Must draw before discarding');
+  });
+});
+
 describe('canEat / applyEat', () => {
   test('eating is allowed on your turn with a matching-rank card, without drawing first', () => {
     const room = setupRoom();
@@ -143,5 +196,72 @@ describe('canEat / applyEat', () => {
     room.discardPile = [c('2', 'diamonds')];
     applyEat(room, 'alice', c('2', 'spades')); // bob is now active, lastDiscardWasEat=true
     expect(canEat(room, 'bob', c('2', 'clubs'))).toBe(true);
+  });
+});
+
+describe('applyMultiEat', () => {
+  test('eating with a pair (2 matching cards) plays both onto the pile and credits x2 points', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('2', 'spades'), c('2', 'hearts'), c('9', 'clubs')];
+    room.discardPile = [c('2', 'diamonds')];
+    room.discardOwnerId = 'bob';
+    const pair = [c('2', 'spades'), c('2', 'hearts')];
+    const result = applyMultiEat(room, 'alice', pair);
+    expect(result.eaten).toEqual(pair);
+    expect(result.points).toBe(2);
+    expect(room.discardPile).toEqual([c('2', 'diamonds'), c('2', 'spades'), c('2', 'hearts')]);
+    expect(room.players[0].hand).toEqual([c('9', 'clubs')]);
+    expect(room.ledger.bob.alice).toBe(2);
+    expect(room.discardOwnerId).toBe('alice');
+    expect(room.turnIndex).toBe(1);
+  });
+
+  test('eating with a triple (3 matching cards) credits x3 points', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('2', 'spades'), c('2', 'hearts'), c('2', 'clubs')];
+    room.discardPile = [c('2', 'diamonds')];
+    room.discardOwnerId = 'bob';
+    const triple = [c('2', 'spades'), c('2', 'hearts'), c('2', 'clubs')];
+    const result = applyMultiEat(room, 'alice', triple);
+    expect(result.points).toBe(3);
+    expect(room.ledger.bob.alice).toBe(3);
+    expect(room.players[0].hand).toEqual([]);
+  });
+
+  test('throws if fewer than 2 cards are given', () => {
+    const room = setupRoom();
+    room.discardPile = [c('2', 'diamonds')];
+    expect(() => applyMultiEat(room, 'alice', [c('2', 'spades')])).toThrow('Multi-eat requires at least 2 cards');
+  });
+
+  test('throws if the cards do not all share the same rank', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('2', 'spades'), c('9', 'hearts')];
+    room.discardPile = [c('2', 'diamonds')];
+    expect(() => applyMultiEat(room, 'alice', [c('2', 'spades'), c('9', 'hearts')]))
+      .toThrow('Multi-eat cards must all share the same rank');
+  });
+
+  test('throws if the rank does not match the discard pile top', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('9', 'clubs'), c('9', 'diamonds')];
+    room.discardPile = [c('2', 'diamonds')];
+    expect(() => applyMultiEat(room, 'alice', [c('9', 'clubs'), c('9', 'diamonds')])).toThrow('Cannot eat this card');
+  });
+
+  test('throws (and leaves the hand untouched) if one of the claimed cards is not actually in hand', () => {
+    const room = setupRoom();
+    room.players[0].hand = [c('2', 'spades'), c('2', 'hearts')];
+    room.discardPile = [c('2', 'diamonds')];
+    const handBefore = [...room.players[0].hand];
+    expect(() => applyMultiEat(room, 'alice', [c('2', 'spades'), c('2', 'clubs')])).toThrow('Card not in hand');
+    expect(room.players[0].hand).toEqual(handBefore);
+  });
+
+  test('throws if it is not the caller\'s turn', () => {
+    const room = setupRoom();
+    room.players[1].hand = [c('2', 'spades'), c('2', 'hearts')];
+    room.discardPile = [c('2', 'diamonds')];
+    expect(() => applyMultiEat(room, 'bob', [c('2', 'spades'), c('2', 'hearts')])).toThrow('Cannot eat this card');
   });
 });

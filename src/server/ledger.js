@@ -38,7 +38,14 @@ function computeSettlement(room, bahtPerPoint) {
 }
 
 function withUsernames(room, settlements) {
-  const nameOf = (userId) => room.players.find(p => p.userId === userId)?.username || userId;
+  // A debtor/creditor may have moved to spectator (or already quit) between
+  // when the debt was incurred and when it's displayed — players.find alone
+  // would miss them and fall back to the raw userId, so check spectators too.
+  const nameOf = (userId) => (
+    room.players.find(p => p.userId === userId)?.username
+    || (room.spectators || []).find(s => s.userId === userId)?.username
+    || userId
+  );
   return settlements.map(s => ({ ...s, fromUsername: nameOf(s.from), toUsername: nameOf(s.to) }));
 }
 

@@ -1,5 +1,5 @@
 // tests/win.test.js
-const { checkKaengWin, resolveMeldWin, getPayoutMultiplier } = require('../src/win');
+const { checkKaengWin, resolveMeldWin, resolveKaengShowdown, getPayoutMultiplier } = require('../src/win');
 
 const c = (rank, suit) => ({ rank, suit });
 const player = (userId, hand, declaredKaeng = false) => ({ userId, hand, declaredKaeng });
@@ -19,19 +19,29 @@ describe('checkKaengWin', () => {
     expect(result).toEqual({ winners: ['p1'], reason: 'instant_kaeng' });
   });
 
-  test('a claimant with any single card worth 8+ is not eligible, even with a low total', () => {
+  test('a claimant with any single card worth 8+ is not instant-kaeng eligible, but a real tong still wins on the fallback', () => {
     const players = [
-      // total = 1+1+1+1+8 = 12, but the 8 disqualifies this hand card-by-card
+      // total = 1+1+1+1+8 = 12; the 8 disqualifies instant kaeng, but four
+      // aces + a kicker is a genuine tong, so it wins on the meld fallback.
       player('p1', [c('A', 's'), c('A', 'h'), c('A', 'd'), c('A', 'c'), c('8', 's')], true),
     ];
-    expect(checkKaengWin(players, true)).toBeNull();
+    expect(checkKaengWin(players, true)).toEqual({ winners: ['p1'], reason: 'tong' });
   });
 
-  test('not eligible on any turn after the first, even if all cards are < 8', () => {
+  test('a claimant with any single card worth 8+ and no meld is not instant/meld eligible, so falls to the showdown', () => {
     const players = [
-      player('p1', [c('A', 's'), c('A', 'h'), c('2', 'd'), c('2', 'c'), c('7', 'd')], true),
+      player('p1', [c('A', 's'), c('2', 'h'), c('3', 'd'), c('4', 'c'), c('8', 's')], true), // score 18
+      player('p2', [c('A', 'd'), c('A', 'h'), c('2', 's'), c('2', 'c'), c('3', 'h')], false), // score 9, lower
     ];
-    expect(checkKaengWin(players, false)).toBeNull();
+    expect(checkKaengWin(players, true)).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+  });
+
+  test('not instant-kaeng eligible on any turn after the first, even if all cards are < 8 — still falls to the showdown', () => {
+    const players = [
+      player('p1', [c('A', 's'), c('A', 'h'), c('2', 'd'), c('2', 'c'), c('7', 'd')], true), // score 13
+      player('p2', [c('K', 's'), c('K', 'h'), c('Q', 'd'), c('Q', 'c'), c('J', 'd')], false), // score 50, higher
+    ];
+    expect(checkKaengWin(players, false)).toEqual({ winners: ['p1'], reason: 'kaeng_call_win' });
   });
 
   test('two eligible claimants, lowest total score wins', () => {
@@ -45,26 +55,80 @@ describe('checkKaengWin', () => {
 
   test('tie on lowest score with no meld splits the pot', () => {
     const players = [
-      player('p1', [c('A', 's'), c('2', 'h'), c('2', 'd'), c('A', 'c'), c('A', 'h')], true), // 1+2+2+1+1=7
-      player('p2', [c('A', 'd'), c('2', 's'), c('2', 'c'), c('A', 'h'), c('A', 'c')], true), // 7, no meld
+      player('p1', [c('A', 's'), c('A', 'h'), c('2', 'd'), c('2', 'c'), c('3', 's')], true), // 1+1+2+2+3=9, no meld
+      player('p2', [c('A', 'd'), c('A', 'c'), c('2', 's'), c('2', 'h'), c('3', 'd')], true), // 9, no meld
     ];
     const result = checkKaengWin(players, true);
     expect(result.reason).toBe('split_pot');
     expect(result.winners.sort()).toEqual(['p1', 'p2']);
   });
 
-  test('falls back to meld comparison when no claimant is instant-kaeng eligible', () => {
+  test('a valid meld on the first turn upgrades the win reason (for a bigger payout multiplier) when the caller also has the lowest score', () => {
     const players = [
-      player('p1', [c('9', 's'), c('9', 'h'), c('9', 'd')], true), // tong, has a 9 (>= 8), not instant-eligible
-      player('p2', [c('K', 'c'), c('K', 'd'), c('K', 's')], true), // tong, has Ks (>= 8), not instant-eligible, higher rank
+      player('p1', [c('9', 's'), c('9', 'h'), c('9', 'd')], true), // tong, score 27, has a 9 (>= 8) so not instant-eligible
+      player('p2', [c('K', 'c'), c('K', 'd'), c('K', 's')], false), // score 30, doesn't declare
     ];
     const result = checkKaengWin(players, true);
-    expect(result).toEqual({ winners: ['p2'], reason: 'tong' });
+    expect(result).toEqual({ winners: ['p1'], reason: 'tong' });
   });
 
-  test('returns null for an invalid declaration (not eligible, no meld)', () => {
-    const players = [player('p1', [c('K', 's'), c('Q', 'h'), c('J', 'd'), c('9', 'c'), c('8', 's')], true)];
-    expect(checkKaengWin(players, true)).toBeNull();
+  test('a valid meld does NOT win outright — the caller still loses if someone else genuinely scores lower', () => {
+    const players = [
+      player('p1', [c('9', 's'), c('9', 'h'), c('9', 'd')], true), // tong, score 27, has a 9 (>= 8) so not instant-eligible
+      player('p2', [c('A', 'c'), c('A', 'd')], false), // score 2, beats p1's meld
+    ];
+    const result = checkKaengWin(players, true);
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+  });
+
+  test('a meld is not checked on a later turn — falls straight to the showdown, like instant kaeng', () => {
+    const players = [
+      player('p1', [c('9', 's'), c('9', 'h'), c('9', 'd'), c('2', 'c'), c('3', 'h')], true), // real tong, score 26
+      player('p2', [c('A', 'c'), c('A', 'd')], false), // score 2, wins the showdown
+    ];
+    const result = checkKaengWin(players, false);
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+  });
+
+  test('with no instant-kaeng eligibility and no meld, falls back to a score showdown against everyone', () => {
+    const players = [
+      player('p1', [c('K', 's'), c('Q', 'h'), c('J', 'd'), c('9', 'c'), c('8', 's')], true), // no meld, declares
+      player('p2', [c('2', 's'), c('2', 'h'), c('3', 'd'), c('3', 'c'), c('4', 's')], false), // lower score, didn't declare
+    ];
+    const result = checkKaengWin(players, true);
+    expect(result).toEqual({ winners: ['p2'], reason: 'kaeng_call_loss' });
+  });
+
+  test('the showdown fallback still lets the caller win when their score is the best', () => {
+    const players = [
+      player('p1', [c('A', 's'), c('2', 'h'), c('3', 'd'), c('4', 'c'), c('9', 's')], true), // no meld, but low score, declares
+      player('p2', [c('K', 's'), c('Q', 'h'), c('J', 'd'), c('10', 'c'), c('9', 'h')], false),
+    ];
+    const result = checkKaengWin(players, true);
+    expect(result).toEqual({ winners: ['p1'], reason: 'kaeng_call_win' });
+  });
+});
+
+describe('resolveKaengShowdown', () => {
+  test('caller wins on a strictly lower score than everyone else', () => {
+    const caller = player('p1', [c('A', 's'), c('2', 'h')]);
+    const others = [player('p2', [c('9', 's'), c('9', 'h')]), player('p3', [c('K', 's'), c('K', 'h')])];
+    expect(resolveKaengShowdown([caller, ...others], caller)).toEqual({ winners: ['p1'], reason: 'kaeng_call_win' });
+  });
+
+  test('caller wins on a tie for lowest score — they called it first', () => {
+    const caller = player('p1', [c('5', 's'), c('5', 'h')]); // score 10
+    const tied = player('p2', [c('4', 's'), c('6', 'h')]); // score 10
+    expect(resolveKaengShowdown([caller, tied], caller)).toEqual({ winners: ['p1'], reason: 'kaeng_call_win' });
+  });
+
+  test('caller loses to a strictly lower score elsewhere — everyone else gets paid, not just the actual best hand', () => {
+    const caller = player('p1', [c('9', 's'), c('9', 'h')]); // score 18
+    const best = player('p2', [c('A', 's'), c('A', 'h')]); // score 2
+    const middling = player('p3', [c('5', 's'), c('5', 'h')]); // score 10, also beats caller
+    const result = resolveKaengShowdown([caller, best, middling], caller);
+    expect(result.reason).toBe('kaeng_call_loss');
+    expect(result.winners.sort()).toEqual(['p2', 'p3']);
   });
 });
 
@@ -111,6 +175,8 @@ describe('getPayoutMultiplier', () => {
     expect(getPayoutMultiplier('instant_kaeng')).toBe(1);
     expect(getPayoutMultiplier('instant_kaeng_lowest')).toBe(1);
     expect(getPayoutMultiplier('split_pot')).toBe(1);
+    expect(getPayoutMultiplier('kaeng_call_win')).toBe(1);
+    expect(getPayoutMultiplier('kaeng_call_loss')).toBe(1);
     expect(getPayoutMultiplier('tong')).toBe(2);
     expect(getPayoutMultiplier('flush')).toBe(3);
     expect(getPayoutMultiplier('straight')).toBe(3);
